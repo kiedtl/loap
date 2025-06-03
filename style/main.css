@@ -1,0 +1,48 @@
+body {
+	font-family: monospace;
+	font-size: 12px;
+	text-align: left;
+}
+
+td, th {
+	padding: 0.25em 1em 0.25em 0.25em;
+}
+
+tr {
+	border: 1px solid #888;
+}
+
+td:first-child, td:nth-child(4) {
+	font-family: sans-serif;
+}
+
+thead>tr {
+	background: #eee;
+	border: 1px solid black;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+a.btn {
+	display: block;
+	border: 1px solid black;
+	padding: 2px 8px;
+	text-align: center;
+	color: #fff;
+	background: #b22;
+	text-decoration: none;
+}
+
+a.btn:hover {
+	background: #800;
+}
+
+a.btn:active {
+	background: #000;
+}
+
+a.btn:after {
+	content: " →";
+}
