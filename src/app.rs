@@ -1,3 +1,7 @@
+use crate::utils;
+
+use chrono::{DateTime, Utc};
+
 use leptos::either::Either;
 use leptos::server_fn::codec::GetUrl;
 use leptos::prelude::*;
@@ -27,10 +31,24 @@ pub struct Package {
     repo_name: String,
     repo_org: String,
     repo_dir: String,
+    build_version: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ssr", derive(sqlx::FromRow))]
+pub struct Build {
+    version: String,
+    size: u32,
+    completed_at: DateTime<Utc>,
+    completed_in: u32,
+    downloads: u32,
+    object_path: String,
+    builder_name: String,
 }
 
 #[cfg(feature = "ssr")]
 pub mod ssr {
+    pub use futures::TryStreamExt;
     pub use http::method::Method;
     pub use leptos::server_fn::ServerFnError;
     pub use object_store::aws::{AmazonS3, AmazonS3Builder};
@@ -73,8 +91,8 @@ pub async fn api_report_build(
     built_by: String,
     pkg_name: String,
     version: String,
-    completed_in: i32,
-    completed_at: i32,
+    completed_in: u32,
+    completed_at: DateTime<Utc>,
     object_path: String,
 )
     -> Result<(), ServerFnError>
@@ -119,20 +137,22 @@ pub async fn api_report_build(
         object_store::GetOptions { head: true, .. Default::default() },
     ).await;
 
-    match res {
-        Ok(_) => (),
+    let size = match res {
+        // FIXME avoid cast somehow? (sqlite doesn't have u64 though...)
+        Ok(object_store::GetResult { meta, .. }) => meta.size as u32,
         Err(_) => Err(ServerFnError::new("Object inaccessible or not found."))?,
-    }
+    };
 
     let r = sqlx::query(
         "INSERT INTO Builds
-            (built_by, package, version, completed_at, completed_in, result, downloads, object_path)
+            (built_by, package, version, size, completed_at, completed_in, result, downloads, object_path)
         VALUES
-            ($1, $2, $3, $4, $5, 0, 0, $6);"
+            ($1, $2, $3, $4, $5, $6, 0, 0, $7);"
     )
         .bind(maintainer_id)
         .bind(pkg_id)
         .bind(version)
+        .bind(size)
         .bind(completed_at)
         .bind(completed_in)
         .bind(object_path)
@@ -182,7 +202,6 @@ pub async fn api_upload_url(name: String, version: String)
 #[server]
 pub async fn get_packages() -> Result<Vec<Package>, ServerFnError> {
     use self::ssr::*;
-    use futures::TryStreamExt;
 
     let mut conn = db().await?;
 
@@ -194,16 +213,61 @@ pub async fn get_packages() -> Result<Vec<Package>, ServerFnError> {
             r.name      AS repo_name,
             r.forge_url AS repo_forge_url,
             r.org       AS repo_org,
-            r.dir       AS repo_dir
+            r.dir       AS repo_dir,
+            b.version   AS build_version
         FROM Packages p
-        LEFT JOIN Maintainers  m ON m.id = p.maintainer
-        LEFT JOIN Repositories r ON r.id = p.repository;"
+        JOIN Maintainers  m ON m.id = p.maintainer
+        JOIN Repositories r ON r.id = p.repository
+        LEFT JOIN Builds  b ON b.id = (
+            SELECT id FROM Builds
+            WHERE package = p.id
+            ORDER BY completed_at LIMIT 1
+        );"
     ).fetch(&mut *conn);
     while let Some(row) = rows.try_next().await? {
         packages.push(row);
     }
 
     Ok(packages)
+}
+
+// TODO: Allow getting packages by id. Would make it better for links directly
+// from the website, since there'd be one less query.
+#[server]
+pub async fn get_builds(pkgname: String) -> Result<Vec<Build>, ServerFnError> {
+    use self::ssr::*;
+
+    let mut conn = db().await?;
+
+    let query_result = sqlx::query("SELECT p.id FROM Packages p WHERE p.name = $1")
+        .bind(pkgname)
+        .fetch_one(&mut *conn)
+        .await;
+
+    let pkgid = match query_result {
+        Ok(d) => d.try_get::<i32, _>(0)?,
+        Err(sqlx::Error::RowNotFound) => return Err(ServerFnError::new("No such package.")),
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut builds = Vec::new();
+    let mut rows = sqlx::query_as::<_, Build>(
+        "SELECT
+            b.version, b.size, b.completed_at, b.completed_in,
+            b.downloads, b.object_path,
+            m.name as builder_name
+        FROM Builds b
+        JOIN Maintainers m ON m.id = b.built_by
+        WHERE b.package = $1
+        ORDER BY b.completed_at DESC;"
+    )
+        .bind(pkgid)
+        .fetch(&mut *conn);
+    while let Some(row) = rows.try_next().await? {
+        builds.push(row);
+    }
+
+    Ok(builds)
 }
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -250,19 +314,6 @@ pub fn App() -> impl IntoView {
 }
 
 #[component]
-fn Package() -> impl IntoView {
-    let params = use_params_map();
-    let pkgname = move || params.read().get("pkgname");
-
-    if pkgname().is_none() {
-        return view!{ <p>"You want to see a package or no?"</p> }.into_any()
-    }
-
-    view! {
-    }.into_any()
-}
-
-#[component]
 fn HomePage() -> impl IntoView {
     let packages = OnceResource::new(get_packages());
 
@@ -279,13 +330,12 @@ fn HomePage() -> impl IntoView {
                             <td>{package.name.clone()}</td>
                             <td>
                                 <a href={package.repo_forge_url.clone()}>
-                                    {package.repo_org.clone()}/{package.repo_name.clone()}/{package.repo_dir.clone()}
+                                    {package.repo_org.clone()}" → "{package.repo_name.clone()}" → "{package.repo_dir.clone()}
                                 </a>
                             </td>
-                            <td></td>
+                            <td id="m">{package.build_version.clone().unwrap_or("(none)".to_string())}</td>
                             <td>{package.maintainer_name.clone()}</td>
-                            <td></td>
-                            <td><a href="about:blank" class="btn">"Builds"</a></td>
+                            <td><a href={format!("/p/{}", package.name)} class="btn">"View"</a></td>
                         </tr>
                     }
                 })
@@ -303,7 +353,6 @@ fn HomePage() -> impl IntoView {
                         <th>origin</th>
                         <th>version</th>
                         <th>owner</th>
-                        <th>last build</th>
                         <th>builds</th>
                     </tr>
                 </thead>
@@ -315,4 +364,72 @@ fn HomePage() -> impl IntoView {
             </table>
         </div>
     }
+}
+
+#[component]
+fn Package() -> impl IntoView {
+    let params = use_params_map();
+    let param_pkgname = move || params.read().get("pkgname");
+
+    let pkgname = match param_pkgname() {
+        Some(pkgname) => pkgname,
+        // NOTE: this is actually unreachable, since null /p/ routes aren't routed here anyway.
+        None => return view!{ <p>"You want to see a package or no?"</p> }.into_any(),
+    };
+
+    let builds = OnceResource::new(get_builds(pkgname));
+
+    let existing_builds = move || Suspend::new(async move {
+        builds.await.map(|builds| {
+            if builds.is_empty() {
+                return Either::Left(view! {
+                    <p>"This package has never been built."</p>
+                    <p>"(If this package doesn't have a maintainer, maybe step in to help?)"</p>
+                });
+            }
+
+            Either::Right(
+                builds.iter().map(move |build| {
+                    let time_since = chrono::Utc::now()
+                        .signed_duration_since(build.completed_at)
+                        .num_seconds();
+                    view! {
+                        <tr>
+                            <td id="m">{build.version.clone()}</td>
+                            <td id="m">{utils::fmt_size(build.size)}</td>
+                            <td id="m">{utils::fmt_duration(build.completed_in as _)}</td>
+                            <td id="m">{utils::fmt_duration(time_since)}" ago"</td>
+                            <td>{build.builder_name.clone()}</td>
+                            <td id="m">{build.downloads}</td>
+                            <td><a href="about:blank" class="btn">"Download"</a></td>
+                        </tr>
+                    }
+                })
+                .collect::<Vec<_>>(),
+            )
+        })
+    });
+
+    view! {
+        <div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>version</th>
+                        <th>size</th>
+                        <th>time</th>
+                        <th>uploaded</th>
+                        <th>builder</th>
+                        <th>downloads</th>
+                        <th>link</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <Transition fallback=move || view! { <tr><td>"Loading..."</td></tr> }>
+                        {existing_builds}
+                    </Transition>
+                </tbody>
+            </table>
+        </div>
+    }.into_any()
 }
