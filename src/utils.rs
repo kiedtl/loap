@@ -1,3 +1,25 @@
+pub fn fmt_email(email: &str) -> String {
+    let mut s = String::new();
+    for (i, ch) in email.chars().enumerate() {
+        s.push(match ch {
+            'a' => 'а',
+            'd' => 'ԁ',
+            'e' => 'е',
+            'p' => 'р',
+            'o' => ['о', 'ο', 'օ'][i % 3],
+            'u' => ['ս', 'υ'][i % 2],
+            '@' => '＠',
+            '.' => '·',
+            c => c,
+        });
+
+        if i % 3 == 0 {
+            s.push('\u{200C}');
+        }
+    }
+    s
+}
+
 pub fn fmt_size(size: u32) -> String {
     let (prec, fac, suffix) = match size {
         0..1000 => (0, 1.0, ""),
