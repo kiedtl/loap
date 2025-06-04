@@ -3,6 +3,7 @@
 # (c) Kiëd Llaentenn <kiedtl@tilde.team>
 # See the COPYING file for copyright information.
 
+MAINTAINER=$USER
 LOAP_SERVER="https://loap.k1sslinux.org"
 
 export MAKEFLAGS="-j $(($(nproc)-1))"
@@ -70,13 +71,13 @@ upload_new() {
     tarball="$package@$version.tar.xz"
     gzip -cd $orig_tarball | xz -qcT0 -9 > $tarball
 
-    signature_text="kiedtl:$package:$completed_at"
+    signature_text="$MAINTAINER:$package:$completed_at"
     signature="$(printf '%s' "$signature_text" | \
         ssh-keygen -Y sign -f /id_loap -n loap-upload-file 2>/dev/null | \
         sed 's/$/\\n/' | tr -d '\n')"
 
     report="{\
-        \"built_by\": \"kiedtl\",\
+        \"built_by\": \"$MAINTAINER\",\
         \"completed_at\": \"$completed_at_rfc339\",\
         \"completed_in\": $elapsed,\
         \"package\": \"$package\",\
@@ -102,7 +103,7 @@ upload_new() {
         -H "Content-Type: application/json" \
         -d @- <<EOF
     {
-        "built_by": "kiedtl",
+        "built_by": "$MAINTAINER",
         "package": "$package",
         "version": "$version",
         "completed_at": "$completed_at_rfc339",
