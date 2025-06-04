@@ -1,0 +1,146 @@
+#!/bin/sh -e
+#
+# (c) Kiëd Llaentenn <kiedtl@tilde.team>
+# See the COPYING file for copyright information.
+
+LOAP_SERVER="https://loap.k1sslinux.org"
+
+export MAKEFLAGS="-j $(($(nproc)-1))"
+export RUSTFLAGS="-Z threads=$(($(nproc)-1)) -C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold"
+export CFLAGS="-march=x86-64-v2 -pipe -O2 -fuse-ld=mold"
+export CXXFLAGS="$CFLAGS"
+export CC="gcc"
+
+export CCACHE_PREFIX=sccache
+export CMAKE_C_COMPILER_LAUNCHER=sccache
+export CMAKE_CXX_COMPILER_LAUNCHER=sccache
+export RUSTC_WRAPPER=sccache
+
+log_no_nl() {
+    fmt="$1"; shift
+    printf "\x1b[34;1m[loap]\x1b[m $fmt" "$@" >&2
+}
+
+log() {
+    log_no_nl "$@"
+    printf '\n' >&2
+}
+
+last_message=
+log_begin() {
+    last_message="$@"
+    log_no_nl "$@"
+    printf '...\n' >&2
+}
+
+log_done() {
+    printf '\r\x1b[A' >&2
+    log_no_nl "$last_message"
+    printf '... done\n' >&2
+}
+
+checked_curl() {
+    res="$(curl -sSLw '\n%{http_code}' "$@" || {
+        log 'Curl failed (exit code %d)' "$?"
+        exit 1
+    })"
+    code="$(printf '%s' "$res" | sed '$q;d')"
+    data="$(printf '%s' "$res" | sed '$d')"
+
+    [ "$code" -ge 400 ] && {
+        log 'Curl failed (code %d)' "$code"
+        log 'Response: %s\n' "$data"
+        exit 1
+    }
+
+    printf '%s' "$data"
+}
+
+package="$(basename $PWD)"
+version="$(cat version | sed 's/ /-/')"
+
+upload_new() {
+    began="$(date +%s)"
+    KISS_PROMPT=0 kiss b
+    completed_at="$(date +%s)"
+    completed_at_rfc339="$(date -u -d "@$completed_at" +"%Y-%m-%dT%H:%M:%SZ")"
+    elapsed="$((completed_at - began))"
+
+    orig_tarball="$HOME/.cache/kiss/bin/$package@$version.tar.gz"
+    tarball="$package@$version.tar.xz"
+    gzip -cd $orig_tarball | xz -qcT0 -9 > $tarball
+
+    signature_text="kiedtl:$package:$completed_at"
+    signature="$(printf '%s' "$signature_text" | \
+        ssh-keygen -Y sign -f /id_loap -n loap-upload-file 2>/dev/null | \
+        sed 's/$/\\n/' | tr -d '\n')"
+
+    report="{\
+        \"built_by\": \"kiedtl\",\
+        \"completed_at\": \"$completed_at_rfc339\",\
+        \"completed_in\": $elapsed,\
+        \"package\": \"$package\",\
+        \"version\": \"$version\",\
+        \"signature\": \"$signature\"\
+    }"
+    printf '%s' "$report" > "report_$package@${version}.json"
+
+    log_begin "Requesting upload URL"
+    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/upload" -d @- \
+        -H "Content-Type: application/json")"
+    upload_url="$(printf '%s' "$response" | jq -r .Ok.signed_url)"
+    object_path="$(printf '%s' "$response" | jq -r .Ok.object_path)"
+    log_done
+
+    log_begin "Uploading artifact"
+    checked_curl -T "$tarball" "$upload_url"
+    log_done
+
+    log_begin "Making report"
+    checked_curl \
+        "$LOAP_SERVER/api/report" \
+        -H "Content-Type: application/json" \
+        -d @- <<EOF
+    {
+        "built_by": "kiedtl",
+        "package": "$package",
+        "version": "$version",
+        "completed_at": "$completed_at_rfc339",
+        "completed_in": $elapsed,
+        "object_path": "$object_path",
+        "signature": "$signature"
+    }
+EOF
+    log_done
+}
+
+upload_existing_report() {
+    report="$(cat "$1")"
+    tarball="$2"
+
+    log_begin "Requesting upload URL"
+    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/upload" -d @- \
+        -H "Content-Type: application/json")"
+    upload_url="$(printf '%s' "$response" | jq -r .Ok.signed_url)"
+    object_path="$(printf '%s' "$response" | jq -r .Ok.object_path)"
+    log_done
+
+    log_begin "Uploading artifact"
+    checked_curl -T "$tarball" "$upload_url"
+    log_done
+
+    log_begin "Making report"
+    printf '%s' "$report" | \
+        jq ". += { \"object_path\": \"$object_path\" }" | \
+        checked_curl \
+            "$LOAP_SERVER/api/report" -d @- \
+            -H "Content-Type: application/json"
+    log_done
+}
+
+if [ -f "$1" ] && [ -f "$2" ]
+then
+    upload_existing_report "$1" "$2"
+else
+    upload_new
+fi
