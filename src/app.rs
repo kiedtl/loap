@@ -18,6 +18,8 @@ use serde_repr::{Serialize_repr, Deserialize_repr};
 const USER_ORPH: u32 = 0;
 const USER_CEMT: u32 = 2;
 
+static FAVICON: &str = "R0lGODdhEAAQAKIDAAAAAP8AAP8AUP////9vb+SHhwAAAAAAACH5BAkAAAMALAAAAAAQABAAAANOOLrcC45BBcgE+NoBi61EiBXkiA1hKlYQRJAqvHGr92IineKfyqvAHShUyABsq1RxIBAEjjsdoOkMPHPSpxVwnXEw1vDz1ACHyREjWpEAADs=";
+
 static STATIC_ABOUT: &str = include_str!("../static/build/about.html");
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
@@ -40,6 +42,7 @@ pub struct Maintainer {
 #[cfg_attr(feature = "ssr", derive(sqlx::FromRow))]
 pub struct Package {
     name: String,
+    maintainer_id: u32,
     maintainer_name: String,
     repo_forge_url: String,
     repo_name: String,
@@ -351,6 +354,7 @@ pub async fn get_packages(maintainer_id: Option<u32>) -> Result<Vec<Package>, Se
     let query_text = format!(
         "SELECT
             p.name,
+            m.id        AS maintainer_id,
             m.name      AS maintainer_name,
             r.name      AS repo_name,
             r.forge_url AS repo_forge_url,
@@ -434,9 +438,9 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
         <html lang="en">
             <head>
                 <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <link href=format!("data:image/gif;base64,{FAVICON}") rel="icon" />
                 <AutoReload options=options.clone() />
-                <HydrationScripts options/>
+                <HydrationScripts options islands=true/>
                 <script data-goatcounter="https://MYCODE.goatcounter.com/count"
                         async src="//gc.zgo.at/count.js"></script>
                 <MetaTags/>
@@ -468,8 +472,8 @@ pub fn App() -> impl IntoView {
                 <hr />
                 <Routes fallback=|| "Page not found.".into_view()>
                     <Route path=StaticSegment("") view=HomePage/>
-                    <Route path=path!("/p/:pkgname") view=Package/>
-                    <Route path=path!("/m/:maintainer") view=Maintainer/>
+                    <Route path=path!("/p/:pkgname") view=PackagePage/>
+                    <Route path=path!("/m/:maintainer") view=MaintainerPage/>
                 </Routes>
             </main>
         </Router>
@@ -506,6 +510,7 @@ fn HomePage() -> impl IntoView {
 
             Either::Right(
                 packages.iter()
+                    .filter(|pkg| pkg.maintainer_id != USER_CEMT) // Filter out dead packages
                     .map(move |package| view! { <PackageEntry package=package.clone() /> })
                     .collect::<Vec<_>>(),
             )
@@ -536,7 +541,7 @@ fn HomePage() -> impl IntoView {
 }
 
 #[component]
-fn Maintainer() -> impl IntoView {
+fn MaintainerPage() -> impl IntoView {
     let params = use_params_map();
     let param_maintainer = move || params.read().get("maintainer");
 
@@ -631,7 +636,7 @@ fn Maintainer() -> impl IntoView {
 }
 
 #[component]
-fn Package() -> impl IntoView {
+fn PackagePage() -> impl IntoView {
     let params = use_params_map();
     let param_pkgname = move || params.read().get("pkgname");
 
