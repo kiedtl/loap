@@ -359,7 +359,9 @@ pub async fn get_packages(maintainer_id: Option<u32>) -> Result<Vec<Package>, Se
             SELECT id FROM Builds
             WHERE package = p.id
             ORDER BY completed_at LIMIT 1
-        ) {}",
+        )
+        ORDER BY p.name ASC
+        {}",
         if maintainer_id.is_some() {
             "WHERE m.id = $1;"
         } else {
