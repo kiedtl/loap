@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[build-dependencies]
+markdown = "1.0"
+
 [dependencies]
 axum = { version = "0.8.0", features = ["macros"], optional = true }
 chrono = { version = "0.4.41", features = ["serde"] }

@@ -15,6 +15,11 @@ use leptos_router::path;
 use serde::{Serialize, Deserialize};
 use serde_repr::{Serialize_repr, Deserialize_repr};
 
+const USER_ORPH: u32 = 0;
+const USER_CEMT: u32 = 2;
+
+static STATIC_ABOUT: &str = include_str!("../static/build/about.html");
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
 #[repr(u16)]
 pub enum BuildResult {
@@ -360,12 +365,12 @@ pub async fn get_packages(maintainer_id: Option<u32>) -> Result<Vec<Package>, Se
             WHERE package = p.id
             ORDER BY completed_at LIMIT 1
         )
-        ORDER BY p.name ASC
-        {}",
+        {}
+        ORDER BY p.name ASC;",
         if maintainer_id.is_some() {
-            "WHERE m.id = $1;"
+            "WHERE m.id = $1"
         } else {
-            ";"
+            ""
         }
     );
 
@@ -432,6 +437,8 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
                 <AutoReload options=options.clone() />
                 <HydrationScripts options/>
+                <script data-goatcounter="https://MYCODE.goatcounter.com/count"
+                        async src="//gc.zgo.at/count.js"></script>
                 <MetaTags/>
             </head>
             <body>
@@ -491,7 +498,7 @@ fn PackageEntry(package: Package) -> impl IntoView {
 fn HomePage() -> impl IntoView {
     let packages = OnceResource::new(get_packages(None));
 
-    let existing_packages = move || Suspend::new(async move {
+    let package_views = move || Suspend::new(async move {
         packages.await.map(|packages| {
             if packages.is_empty() {
                 return Either::Left(view! { <p>"No packages were found."</p> });
@@ -519,10 +526,11 @@ fn HomePage() -> impl IntoView {
                 </thead>
                 <tbody>
                     <Transition fallback=move || view! { <tr><td>"Loading..."</td></tr> }>
-                        {existing_packages}
+                        {package_views}
                     </Transition>
                 </tbody>
             </table>
+            <div inner_html=STATIC_ABOUT></div>
         </div>
     }
 }
@@ -566,14 +574,24 @@ fn Maintainer() -> impl IntoView {
 
     let maintainer_view = move || Suspend::new(async move {
         maintainer.await.map(|maintainer| match maintainer {
-            Some(Maintainer { id, .. }) if id == 0 => EitherOf3::A(view! {
+            Some(Maintainer { id, .. }) if id == 0 || id == 2 => EitherOf3::A(view! {
                 <p>
-                    "The orphanage is where packages go to die."
+                    {move || match id {
+                        USER_ORPH => "The orphanage is where packages go to die.",
+                        USER_CEMT => "The cemetery is for dead packages.",
+                        _ => unreachable!(),
+                    }}
                 </p>
                 <p>
-                    "If you want to volunteer by uploading packages (and can do
-                    so semi-consistently), please contact kiedtl. Include an
-                    ED25519 SSH public key."
+                    {move || match id {
+                        USER_ORPH => "If you want to volunteer by uploading packages (and can do
+                                      so semi-consistently), please contact kiedtl. Include an
+                                      ED25519 SSH public key.",
+                        USER_CEMT => "These packages don't meet the criteria for inclusion on LOAP.
+                                      If you want these packages to be moved to the orphanage where someone
+                                      can pick them up, please think of a plausible excuse first.",
+                        _ => unreachable!(),
+                    }}
                 </p>
             }),
             Some(maintainer) => EitherOf3::B(view! {
