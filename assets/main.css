@@ -64,7 +64,7 @@ table.list>tbody>tr {
 }
 
 table.list>tbody>tr:nth-child(even) {
-    background: #f2f0ee;
+    background: #eae9ed;
 }
 
 h1, td#m {
