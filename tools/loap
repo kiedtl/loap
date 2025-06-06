@@ -3,6 +3,7 @@
 # (c) Kiëd Llaentenn <kiedtl@tilde.team>
 # See the COPYING file for copyright information.
 
+LOAP_PRIVATE_KEY="${KEY:-~/.ssh/id_loap}"
 LOAP_MAINTAINER="${MAINTAINER:-$USER}"
 LOAP_SERVER="https://loap.k1sslinux.org"
 
@@ -73,7 +74,7 @@ upload_new() {
 
     signature_text="$LOAP_MAINTAINER:$package:$completed_at"
     signature="$(printf '%s' "$signature_text" | \
-        ssh-keygen -Y sign -f /id_loap -n loap-upload-file 2>/dev/null | \
+        ssh-keygen -Y sign -f "$LOAP_PRIVATE_KEY" -n loap-upload-file 2>/dev/null | \
         sed 's/$/\\n/' | tr -d '\n')"
 
     report="{\
