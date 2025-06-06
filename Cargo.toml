@@ -3,18 +3,17 @@ name = "loap"
 version = "0.1.0"
 edition = "2024"
 
-[build-dependencies]
-markdown = "1.0"
-
 [dependencies]
 anyhow = "1.0.98"
 axum = { version = "0.8.0", features = ["macros"] }
 chrono = { version = "0.4.41", features = ["serde"] }
 futures = "0.3.30"
+gray_matter = "0.2.8"
 hypertext = { git = "https://github.com/vidhanio/hypertext", features = ["axum"] }
+markdown = "1.0"
 object_store = { version = "0.12.1", features = ["aws"] }
 serde_json = "1.0"
-serde_repr = { version = "0.1" }
+serde_repr = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono"] }
 ssh-key = { version = "0.6.7", features = ["crypto"] }

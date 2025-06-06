@@ -133,7 +133,7 @@ a.nav:hover {
     background: #222;
 }
 
-a.nav:active {
+a.nav.sel, a.nav:active {
     color: #fff;
     background: #000;
 }

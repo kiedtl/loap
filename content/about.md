@@ -1,3 +1,7 @@
+---
+page: About
+---
+
 ## About
 
 LOAP provides prebuilt tarballs for [KISS

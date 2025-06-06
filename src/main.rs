@@ -28,14 +28,13 @@ const USER_ORPH: u32 = 0;
 const USER_CEMT: u32 = 2;
 
 static FAVICON: &str = "R0lGODdhEAAQAKIDAAAAAP8AAP8AUP////9vb+SHhwAAAAAAACH5BAkAAAMALAAAAAAQABAAAANOOLrcC45BBcgE+NoBi61EiBXkiA1hKlYQRJAqvHGr92IineKfyqvAHShUyABsq1RxIBAEjjsdoOkMPHPSpxVwnXEw1vDz1ACHyREjWpEAADs=";
-
-static STATIC_STYLE: &str = include_str!("../static/main.css");
-static STATIC_ABOUT: &str = include_str!("../static/build/about.html");
+static STYLE: &str = include_str!("../assets/main.css");
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<SqliteConnection>>,
     pub s3: AmazonS3,
+    pub pages: Vec<StaticPage>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
@@ -79,31 +78,46 @@ pub struct Package {
 
 const NAV_PAGES: &[Page] = &[Page::Home, Page::Faq, Page::Cemetery];
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Page<'a> {
+#[derive(Clone, Debug, Deserialize)]
+pub struct Frontmatter {
+    page: Page,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct StaticPage {
+    meta: Frontmatter,
+    name: String, // the filename w/o extension
+    html: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub enum Page {
     Home,
+    About,
     Faq,
     Cemetery,
     NotFound, // 404
     Error, // 500
-    Other(&'a str),
+    Other(String),
 }
 
-impl<'a> Page<'a> {
-    pub fn title(&self) -> &'a str {
+impl Page {
+    pub fn title(&self) -> &str {
         match self {
             Page::Home => "packages",
+            Page::About => "about",
             Page::Faq => "faq",
             Page::Cemetery => "cemetery",
             Page::NotFound => "404",
             Page::Error => "500",
-            Page::Other(s) => s,
+            Page::Other(s) => &s,
         }
     }
 
     pub fn href(&self) -> &'static str {
         match self {
             Page::Home => "/",
+            Page::About => "/about",
             Page::Faq => "/faq",
             Page::Cemetery => "/m/cemetery",
             _ => unreachable!(),
@@ -118,6 +132,33 @@ async fn main() -> AnyResult<()> {
         .parse::<u16>()
         .unwrap();
 
+    let mut pages = vec![];
+    for entry in fs::read_dir("content")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().unwrap().is_file())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+    {
+        use gray_matter::Matter;
+        use gray_matter::engine::YAML;
+        use markdown;
+
+        let matter = Matter::<YAML>::new();
+
+        let path = entry.path();
+        let raw = fs::read_to_string(&path).unwrap();
+        let fname = path.file_stem().unwrap().to_string_lossy();
+
+        let result = matter.parse_with_struct::<Frontmatter>(&raw).unwrap();
+        let html = markdown::to_html(&result.content);
+
+        pages.push(StaticPage {
+            meta: result.data,
+            name: fname.to_string(),
+            html
+        });
+    }
+
     let state = AppState {
         db: Arc::new(Mutex::new(
                 SqliteConnection::connect("sqlite:main.sqlite3")
@@ -130,6 +171,7 @@ async fn main() -> AnyResult<()> {
             .with_bucket_name("kisslinux")
             .build()
             .with_context(|| "Couldn't create S3 state")?,
+        pages,
     };
 
     let app = Router::new()
@@ -170,7 +212,7 @@ async fn package_page(
     };
 
     maud! {
-        Doc page=(Page::Other(&pkgname)) {
+        Doc page=(Page::Other(pkgname.clone())) {
             h2 { (pkgname.clone()) }
 
             @match &builds {
@@ -241,8 +283,10 @@ async fn maintainer_page(
         Err(e) => return construct_500_page(e),
     };
 
+    let page = if maintainer.id == USER_CEMT { Page::Cemetery } else { Page::Other(maintainer_name.clone()) };
+
     maud! {
-        Doc page=(Page::Other(&maintainer_name)) {
+        Doc page=(page.clone()) {
             h2 { (maintainer_name.clone()) }
 
             @if maintainer.id == USER_ORPH {
@@ -319,31 +363,25 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
                     }
                 }
             }
-
-            (Raw(STATIC_ABOUT))
         }
     }.render()
 }
 
 async fn static_page(
+    State(state): State<AppState>,
     Path(path): Path<String>
 ) -> impl IntoResponse {
-    let fname = format!("public/{path}.html");
-
-    match fs::exists(&fname) {
-        Err(e) => return construct_500_page(e.into()),
-        Ok(false) => return construct_404_page(),
-        Ok(true) => (),
+    for page in &state.pages {
+        if page.name == path {
+            return maud! {
+                Doc page=(page.meta.page.clone()) {
+                    (Raw(page.html.clone()))
+                }
+            }.render();
+        }
     }
 
-    match fs::read_to_string(&fname) {
-        Ok(html) => maud! {
-            Doc page=(Page::Other(&path)) {
-                (Raw(html.clone()))
-            }
-        }.render(),
-        Err(e) => construct_500_page(e.into()),
-    }
+    construct_404_page()
 }
 
 fn construct_500_page(e: anyhow::Error) -> Rendered<String> {
@@ -363,12 +401,12 @@ fn construct_404_page() -> Rendered<String> {
     }.render()
 }
 
-struct Doc<'a, R: Renderable> {
-    page: Page<'a>,
+struct Doc<R: Renderable> {
+    page: Page,
     children: R,
 }
 
-impl<R: Renderable> Renderable for Doc<'_, R> {
+impl<R: Renderable> Renderable for Doc<R> {
     fn render_to(&self, output: &mut String) {
         maud! {
             !DOCTYPE
@@ -380,7 +418,7 @@ impl<R: Renderable> Renderable for Doc<'_, R> {
                     script data-goatcounter="https://loap.goatcounter.com/count"
                         async src="//gc.zgo.at/count.js" { }
 
-                    style { (Raw(STATIC_STYLE)) }
+                    style { (Raw(STYLE)) }
                     title {
                         "LOAP — " (self.page.title())
                     }
@@ -392,12 +430,10 @@ impl<R: Renderable> Renderable for Doc<'_, R> {
                         hr;
                         br;
                         @for page in NAV_PAGES {
-                            a .nav href=(page.href()) {
-                                @if *page == self.page {
-                                    (page.title()) "*"
-                                } @else {
-                                    (page.title())
-                                }
+                            @if *page == self.page {
+                                a .sel .nav href=(page.href()) { (page.title()) code { "*" } }
+                            } @else {
+                                a .nav href=(page.href()) { (page.title()) }
                             }
                         }
                     }

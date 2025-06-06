@@ -1,3 +1,7 @@
+---
+page: Faq
+---
+
 ## FAQ
 
 - **What architectures are supported?**
