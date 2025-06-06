@@ -386,6 +386,13 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
     maud! {
         Doc page=(Page::Home) {
             h2 { "Packages" }
+
+            p {
+                "Use "
+                    a href="https://github.com/kiedtl/loap/blob/trunk/tools/kiss-pig" { "kiss-pig" }
+                " to download packages, and " code { "kiss i" } " as usual to install them."
+            }
+
             table .list {
                 thead {
                     tr {
