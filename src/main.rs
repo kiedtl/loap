@@ -616,7 +616,7 @@ async fn get_packages(
         LEFT JOIN Builds  b ON b.id = (
             SELECT id FROM Builds
             WHERE package = p.id
-            ORDER BY completed_at LIMIT 1
+            ORDER BY completed_at DESC LIMIT 1
         )
         WHERE 1 {}
         ORDER BY p.name ASC;",
