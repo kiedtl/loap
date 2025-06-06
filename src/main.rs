@@ -404,6 +404,21 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
                     }
                 }
             }
+            br;
+            div style="text-align:center" {
+                pre { r#"
+                                       ____
+                                      |    |
+.------------------------------------.|    |
+|                                     |    |
+|   "The system is going down NOW!"   |    |
+  |                                   ._|____|_.
+'-----------------------------------\\|o_o |
+                                      |:_/ |
+                                     //   \ \
+                                     (|    | )
+                "# }
+            }
         }
     }.render()
 }
@@ -448,22 +463,22 @@ struct Doc<R: Renderable> {
 }
 
 impl<R: Renderable> Renderable for Doc<R> {
-    fn render_to(&self, output: &mut String) {
-        maud! {
-            !DOCTYPE
-            html {
-                head lang="en" {
-                    meta charset="utf-8";
-                    link href=(format!("data:image/gif;base64,{FAVICON}")) rel="icon";
+        fn render_to(&self, output: &mut String) {
+            maud! {
+                !DOCTYPE
+                html {
+                    head lang="en" {
+                        meta charset="utf-8";
+                        link href=(format!("data:image/gif;base64,{FAVICON}")) rel="icon";
 
-                    script data-goatcounter="https://loap.goatcounter.com/count"
-                        async src="//gc.zgo.at/count.js" { }
+                        script data-goatcounter="https://loap.goatcounter.com/count"
+                            async src="//gc.zgo.at/count.js" { }
 
-                    style { (Raw(STYLE)) }
-                    title {
-                        "LOAP — " (self.page.title())
+                        style { (Raw(STYLE)) }
+                        title {
+                            "LOAP — " (self.page.title())
+                        }
                     }
-                }
                 body {
                     nav {
                         h1 { a href="/" { "LIPSTICK\nON A PIG" } }
