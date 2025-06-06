@@ -34,25 +34,25 @@ main {
 }
 
 nav {
-    max-width: 128px;
-    min-width: 128px;
+    max-width: 160px;
+    min-width: 160px;
 }
 
 h1 {
-    font-size: 17pt;
+    font-size: 22.5pt;
     color: #911;
 }
 
 h2 {
-    font-size: 15.5pt;
+    font-size: 18pt;
 }
 
 h3 {
-    font-size: 13pt;
+    font-size: 16pt;
 }
 
 h4 {
-    font-size: 12pt;
+    font-size: 14pt;
 }
 
 table.list>tbody>tr>td, table.list>thead>tr>th {
