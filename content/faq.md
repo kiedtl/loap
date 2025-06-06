@@ -31,3 +31,13 @@ Ping the maintainer in IRC or send an email.
 As of now that hasn't been decided. Most likely, as the 10GB limit becomes more
 imminent, older versions of larger packages (`llvm`, `clang`, `rust`) will begin
 to be deleted.
+
+- **What relation does LOAP have to the KISS project?**
+
+LOAP was made by kiedtl, a former KISS community maintainer, who recently
+returned to the project (hello \_o/). It has not been explicitly endorsed by
+KISS community.
+
+LOAP volunteers may or may not be part of the "official" KISS community.
+
+Needless to say, it has not been endorsed by Dylan.
