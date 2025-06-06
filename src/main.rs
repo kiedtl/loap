@@ -275,7 +275,7 @@ async fn package_page(
                                 let time_since = chrono::Utc::now()
                                     .signed_duration_since(build.completed_at)
                                     .num_seconds();
-                                let dl = format!("/api/dl?id={}", build.id);
+                                let dl = format!("/api/b/dl?id={}", build.id);
 
                                 maud! {
                                     tr {
