@@ -1,4 +1,4 @@
-static/build/
+public/*.html
 debug/
 target/
 Cargo.lock

@@ -21,6 +21,21 @@ html {
 
 body {
     text-align: left;
+    display: flex;
+    flex-direction: row;
+    background: #f7f5f2;
+    margin: 25px auto;
+    max-width: 950px;
+}
+
+main {
+    display: block;
+    margin-left: 50px;
+}
+
+nav {
+    max-width: 128px;
+    min-width: 128px;
 }
 
 h1 {
@@ -40,12 +55,6 @@ h4 {
     font-size: 12pt;
 }
 
-main {
-    display: block;
-    max-width: 850px;
-    margin: auto;
-}
-
 table.list>tbody>tr>td, table.list>thead>tr>th {
     padding: 0.25em 2em 0.25em 0.25em;
 }
@@ -55,7 +64,7 @@ table.list>tbody>tr {
 }
 
 table.list>tbody>tr:nth-child(even) {
-    background: #eeeef2;
+    background: #f2f0ee;
 }
 
 h1, td#m {
@@ -105,4 +114,26 @@ a.btn:active {
 
 a.btn:after {
     content: " →";
+}
+
+a.nav {
+    display: block;
+    border: 1px solid black;
+    padding: 0.08em 0.7em;
+    color: #000;
+    background: #fff;
+    text-decoration: none;
+    margin-bottom: 0.35em;
+    width: 80%;
+    box-shadow: 3px 3px #8e8b89;
+}
+
+a.nav:hover {
+    color: #fff;
+    background: #222;
+}
+
+a.nav:active {
+    color: #fff;
+    background: #000;
 }

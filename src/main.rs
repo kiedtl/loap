@@ -2,6 +2,7 @@ mod api;
 mod utils;
 
 use std::fmt;
+use std::fs;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -76,6 +77,39 @@ pub struct Package {
     build_version: Option<String>,
 }
 
+const NAV_PAGES: &[Page] = &[Page::Home, Page::Faq, Page::Cemetery];
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Page<'a> {
+    Home,
+    Faq,
+    Cemetery,
+    NotFound, // 404
+    Error, // 500
+    Other(&'a str),
+}
+
+impl<'a> Page<'a> {
+    pub fn title(&self) -> &'a str {
+        match self {
+            Page::Home => "packages",
+            Page::Faq => "faq",
+            Page::Cemetery => "cemetery",
+            Page::NotFound => "404",
+            Page::Error => "500",
+            Page::Other(s) => s,
+        }
+    }
+
+    pub fn href(&self) -> &'static str {
+        match self {
+            Page::Home => "/",
+            Page::Faq => "/faq",
+            Page::Cemetery => "/m/cemetery",
+            _ => unreachable!(),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> AnyResult<()> {
@@ -100,6 +134,7 @@ async fn main() -> AnyResult<()> {
 
     let app = Router::new()
         .route("/", get(home_page))
+        .route("/{page}", get(static_page))
         .route("/p/{pkgname}", get(package_page))
         .route("/m/{maintainer_name}", get(maintainer_page))
         .route("/api/p/ls", get(api::list_packages))
@@ -135,8 +170,8 @@ async fn package_page(
     };
 
     maud! {
-        Page title=(&pkgname) {
-            h3 { (pkgname.clone()) }
+        Doc page=(Page::Other(&pkgname)) {
+            h2 { (pkgname.clone()) }
 
             @match &builds {
                 builds if builds.is_empty() => {
@@ -151,7 +186,7 @@ async fn package_page(
                             th { "time" }
                             th { "completed" }
                             th { "builder" }
-                            th { "downloads" }
+                            th { "dls" }
                             th { "link" }
                         }
                     }
@@ -171,7 +206,7 @@ async fn package_page(
                                         td #m { (utils::fmt_duration(time_since))" ago" }
                                         td { (build.builder_name) }
                                         td #m { (build.downloads) }
-                                        td { a .btn href=(dl) download { "Download" } }
+                                        td { a .btn href=(dl) download { "Go" } }
                                     }
                                 }
                             })
@@ -192,8 +227,8 @@ async fn maintainer_page(
     let maintainer = match get_maintainer(&state, maintainer_name.clone()).await {
         Ok(Some(m)) => m,
         Ok(None) => return maud! {
-            Page title="404" {
-                h3 { (maintainer_name.clone()) }
+            Doc page=(Page::NotFound) {
+                h2 { (maintainer_name.clone()) }
                 p { "This person doesn't exist." }
                 p { "(Want to change that? Ping someone in #kisslinux.)" }
             }
@@ -207,8 +242,8 @@ async fn maintainer_page(
     };
 
     maud! {
-        Page title=(&maintainer_name) {
-            h3 { (maintainer_name.clone()) }
+        Doc page=(Page::Other(&maintainer_name)) {
+            h2 { (maintainer_name.clone()) }
 
             @if maintainer.id == USER_ORPH {
                 p {
@@ -264,7 +299,8 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     maud! {
-        Page title="" {
+        Doc page=(Page::Home) {
+            h2 { "Packages" }
             table .list {
                 thead {
                     tr {
@@ -289,10 +325,31 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
     }.render()
 }
 
+async fn static_page(
+    Path(path): Path<String>
+) -> impl IntoResponse {
+    let fname = format!("public/{path}.html");
+
+    match fs::exists(&fname) {
+        Err(e) => return construct_500_page(e.into()),
+        Ok(false) => return construct_404_page(),
+        Ok(true) => (),
+    }
+
+    match fs::read_to_string(&fname) {
+        Ok(html) => maud! {
+            Doc page=(Page::Other(&path)) {
+                (Raw(html.clone()))
+            }
+        }.render(),
+        Err(e) => construct_500_page(e.into()),
+    }
+}
+
 fn construct_500_page(e: anyhow::Error) -> Rendered<String> {
     maud! {
-        Page title="500" {
-            h3 { "500 Internal Server Error" }
+        Doc page=(Page::Error) {
+            h2 { "500 Internal Server Error" }
             p { (e.to_string()) }
         }
     }.render()
@@ -300,18 +357,18 @@ fn construct_500_page(e: anyhow::Error) -> Rendered<String> {
 
 fn construct_404_page() -> Rendered<String> {
     maud! {
-        Page title="404" {
-            h3 { "404 Not Found" }
+        Doc page=(Page::NotFound) {
+            h2 { "404 Not Found" }
         }
     }.render()
 }
 
-struct Page<'a, R: Renderable> {
-    title: &'a str,
+struct Doc<'a, R: Renderable> {
+    page: Page<'a>,
     children: R,
 }
 
-impl<R: Renderable> Renderable for Page<'_, R> {
+impl<R: Renderable> Renderable for Doc<'_, R> {
     fn render_to(&self, output: &mut String) {
         maud! {
             !DOCTYPE
@@ -320,30 +377,31 @@ impl<R: Renderable> Renderable for Page<'_, R> {
                     meta charset="utf-8";
                     link href=(format!("data:image/gif;base64,{FAVICON}")) rel="icon";
 
-                    script data-goatcounter="https://MYCODE.goatcounter.com/count"
+                    script data-goatcounter="https://loap.goatcounter.com/count"
                         async src="//gc.zgo.at/count.js" { }
 
                     style { (Raw(STATIC_STYLE)) }
                     title {
-                        @if self.title.is_empty() {
-                            "LOAP"
-                        } @else {
-                            "LOAP —" (self.title.to_owned())
-                        }
+                        "LOAP — " (self.page.title())
                     }
                 }
                 body {
-                    main {
-                        table {
-                            tbody {
-                                tr {
-                                    td { h1 { a href="/" { "Lipstick on a Pig" } } }
-                                    td style="text-align:right" { h2 { "Prebuilt packages for KISS Linux" } }
+                    nav {
+                        h1 { a href="/" { "LIPSTICK\nON A PIG" } }
+                        h3 { "Prebuilt packages for KISS Linux" }
+                        hr;
+                        br;
+                        @for page in NAV_PAGES {
+                            a .nav href=(page.href()) {
+                                @if *page == self.page {
+                                    (page.title()) "*"
+                                } @else {
+                                    (page.title())
                                 }
                             }
                         }
-                        hr;
-                        br;
+                    }
+                    main {
                         (self.children)
                     }
                 }
@@ -362,7 +420,7 @@ fn package_view<'a>(p: &'a Package) -> impl Renderable + use<'a> {
             td { (package.name.clone()) }
             td {
                 a href=(package.repo_forge_url) {
-                    (package.repo_org.clone())" → "(package.repo_name.clone())" → "(package.repo_dir.clone())
+                    (package.repo_org.clone())wbr;" → "(package.repo_name.clone())wbr;" → "(package.repo_dir.clone())
                 }
             }
             td #m {

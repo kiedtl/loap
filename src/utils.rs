@@ -42,5 +42,6 @@ pub fn fmt_duration(seconds: i64) -> String {
     }
 
     parts.reverse();
+    parts.truncate(3); // Prevent "3w 5d 12h 8m 34s", "3w 5d 12h" is good enough!
     parts.join(" ")
 }

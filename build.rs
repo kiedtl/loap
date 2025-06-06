@@ -4,7 +4,7 @@ use markdown;
 
 fn main() {
     let input_dir = Path::new("static");
-    let output_dir = input_dir.join("build");
+    let output_dir = Path::new("public");
 
     fs::create_dir_all(&output_dir).unwrap();
 
