@@ -76,7 +76,7 @@ pub struct Package {
     build_version: Option<String>,
 }
 
-const NAV_PAGES: &[Page] = &[Page::Home, Page::Faq, Page::Cemetery];
+const NAV_PAGES: &[Page] = &[Page::Home, Page::Faq, Page::Orphanage, Page::Cemetery];
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Frontmatter {
@@ -95,6 +95,7 @@ pub enum Page {
     Home,
     About,
     Faq,
+    Orphanage,
     Cemetery,
     NotFound, // 404
     Error, // 500
@@ -107,6 +108,7 @@ impl Page {
             Page::Home => "packages",
             Page::About => "about",
             Page::Faq => "faq",
+            Page::Orphanage => "orphanage",
             Page::Cemetery => "cemetery",
             Page::NotFound => "404",
             Page::Error => "500",
@@ -119,6 +121,7 @@ impl Page {
             Page::Home => "/",
             Page::About => "/about",
             Page::Faq => "/faq",
+            Page::Orphanage => "/m/orphanage",
             Page::Cemetery => "/m/cemetery",
             _ => unreachable!(),
         }
@@ -283,7 +286,11 @@ async fn maintainer_page(
         Err(e) => return construct_500_page(e),
     };
 
-    let page = if maintainer.id == USER_CEMT { Page::Cemetery } else { Page::Other(maintainer_name.clone()) };
+    let page = match maintainer.id {
+        USER_ORPH => Page::Orphanage,
+        USER_CEMT => Page::Cemetery,
+        _ => Page::Other(maintainer_name.clone()),
+    };
 
     maud! {
         Doc page=(page.clone()) {
