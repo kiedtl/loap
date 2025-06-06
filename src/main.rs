@@ -89,7 +89,7 @@ pub struct PackageInfo {
     download_count: u32,
 }
 
-const NAV_PAGES: &[Page] = &[Page::Home, Page::Faq, Page::Orphanage, Page::Cemetery];
+const NAV_PAGES: &[Page] = &[Page::Home, Page::About, Page::Faq, Page::Orphanage, Page::Cemetery];
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Frontmatter {
