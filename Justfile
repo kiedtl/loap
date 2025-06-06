@@ -1,4 +1,4 @@
 deploy:
-	cargo leptos build --release
+	cargo build --release
 	scp target/release/loap illuvatar:~kiedtl/loap/
-	scp -r target/site illuvatar:~kiedtl/loap/
+	scp -r public illuvatar:~kiedtl/loap/

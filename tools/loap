@@ -87,10 +87,10 @@ upload_new() {
     printf '%s' "$report" > "report_$package@${version}.json"
 
     log_begin "Requesting upload URL"
-    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/upload" -d @- \
+    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/b/upload" -d @- \
         -H "Content-Type: application/json")"
-    upload_url="$(printf '%s' "$response" | jq -r .Ok.signed_url)"
-    object_path="$(printf '%s' "$response" | jq -r .Ok.object_path)"
+    upload_url="$(printf '%s' "$response" | jq -r .signed_url)"
+    object_path="$(printf '%s' "$response" | jq -r .object_path)"
     log_done
 
     log_begin "Uploading artifact"
@@ -98,8 +98,8 @@ upload_new() {
     log_done
 
     log_begin "Making report"
-    checked_curl \
-        "$LOAP_SERVER/api/report" \
+    checked_curl -i \
+        "$LOAP_SERVER/api/b/report" \
         -H "Content-Type: application/json" \
         -d @- <<EOF
     {
@@ -120,10 +120,10 @@ upload_existing_report() {
     tarball="$2"
 
     log_begin "Requesting upload URL"
-    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/upload" -d @- \
+    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/b/upload" -d @- \
         -H "Content-Type: application/json")"
-    upload_url="$(printf '%s' "$response" | jq -r .Ok.signed_url)"
-    object_path="$(printf '%s' "$response" | jq -r .Ok.object_path)"
+    upload_url="$(printf '%s' "$response" | jq -r .signed_url)"
+    object_path="$(printf '%s' "$response" | jq -r .object_path)"
     log_done
 
     log_begin "Uploading artifact"
@@ -134,7 +134,7 @@ upload_existing_report() {
     printf '%s' "$report" | \
         jq ". += { \"object_path\": \"$object_path\" }" | \
         checked_curl \
-            "$LOAP_SERVER/api/report" -d @- \
+            "$LOAP_SERVER/api/b/report" -d @- \
             -H "Content-Type: application/json"
     log_done
 }
