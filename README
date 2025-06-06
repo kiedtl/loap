@@ -1,1 +1,10 @@
 Lipstick on a pig
+
+TODO:
+
+Statistics:
+- Most downloaded package
+- Total downloads
+- Last updated package
+- Least downloaded package
+  - Note: if zero, consider removing that package... waste of space!

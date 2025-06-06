@@ -76,6 +76,19 @@ pub struct Package {
     build_version: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+pub struct PackageInfo {
+    id: u32,
+    name: String,
+    maintainer_name: String,
+    repo_forge_url: String,
+    repo_name: String,
+    repo_org: String,
+    repo_dir: String,
+    build_count: u32,
+    download_count: u32,
+}
+
 const NAV_PAGES: &[Page] = &[Page::Home, Page::Faq, Page::Orphanage, Page::Cemetery];
 
 #[derive(Clone, Debug, Deserialize)]
@@ -209,6 +222,11 @@ async fn package_page(
         Ok(Some(pkg_id)) => pkg_id,
     };
 
+    let package_info = match get_package_info(&state, pkg_id).await {
+        Ok(p) => p,
+        Err(e) => return construct_500_page(e),
+    };
+
     let builds = match get_builds(&state, pkg_id).await {
         Ok(b) => b,
         Err(e) => return construct_500_page(e),
@@ -216,7 +234,23 @@ async fn package_page(
 
     maud! {
         Doc page=(Page::Other(pkgname.clone())) {
-            h2 { (pkgname.clone()) }
+            h2 { "Package: " (pkgname.clone()) }
+
+            div style="column-count: 3" {
+                div {
+                    b { "origin: " }
+                    PackageOriginView
+                        forge=(&package_info.repo_forge_url)
+                        org=(&package_info.repo_org)
+                        name=(&package_info.repo_name)
+                        dir=(&package_info.repo_dir);
+                }
+                div { b { "maintainer: " } (package_info.maintainer_name) }
+                div { b { "total builds: " } (package_info.build_count) }
+                div { b { "total downloads: " } (package_info.download_count) }
+            }
+
+            h3 { "Builds" }
 
             @match &builds {
                 builds if builds.is_empty() => {
@@ -456,21 +490,33 @@ impl<R: Renderable> Renderable for Doc<R> {
 
 #[component]
 fn package_view<'a>(p: &'a Package) -> impl Renderable + use<'a> {
-    let package = p;
-    let mname = &package.maintainer_name;
+    let mname = &p.maintainer_name;
     maud! {
         tr {
-            td { (package.name.clone()) }
+            td { (p.name.clone()) }
             td {
-                a href=(package.repo_forge_url) {
-                    (package.repo_org.clone())wbr;" → "(package.repo_name.clone())wbr;" → "(package.repo_dir.clone())
-                }
+                PackageOriginView
+                    forge=(&p.repo_forge_url)
+                    org=(&p.repo_org)
+                    name=(&p.repo_name)
+                    dir=(&p.repo_dir);
             }
             td #m {
-                (package.build_version.clone().unwrap_or("(none)".to_string()))
+                (p.build_version.clone().unwrap_or("(none)".to_string()))
             }
             td { a href=(format!("/m/{}", mname)) { (mname.clone()) } }
-            td { a .btn href=(format!("/p/{}", package.name)) { "View" } }
+            td { a .btn href=(format!("/p/{}", p.name)) { "View" } }
+        }
+    }
+}
+
+#[component]
+fn package_origin_view<'a>(forge: &'a str, org: &'a str, name: &'a str, dir: &'a str)
+    -> impl Renderable + use<'a>
+{
+    maud! {
+        a href=(forge) {
+            (org)wbr;" → "(name)wbr;" → "(dir)
         }
     }
 }
@@ -496,9 +542,39 @@ impl fmt::Display for AuthCheck {
     }
 }
 
+async fn get_package_info(
+    state: &AppState,
+    package_id: u32,
+) -> AnyResult<PackageInfo> {
+    let mut conn = state.db.lock().await;
+
+    let info = sqlx::query_as::<_, PackageInfo>(
+        "SELECT
+            p.id, p.name,
+            m.name      AS maintainer_name,
+            r.name      AS repo_name,
+            r.forge_url AS repo_forge_url,
+            r.org       AS repo_org,
+            r.dir       AS repo_dir,
+            COUNT(b.id) AS build_count,
+            COALESCE(SUM(b.downloads), 0) AS download_count
+        FROM Packages p
+        JOIN Maintainers  m ON m.id = p.maintainer
+        JOIN Repositories r ON r.id = p.repository
+        LEFT JOIN Builds  b ON p.id = b.package
+        WHERE p.id = ?
+        GROUP BY p.id;",
+    )
+        .bind(package_id)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    Ok(info)
+}
+
 async fn get_packages(
     state: &AppState,
-    maintainer_id: Option<u32>
+    maintainer_id: Option<u32>,
 ) -> AnyResult<Vec<Package>> {
     let mut conn = state.db.lock().await;
 
@@ -520,23 +596,20 @@ async fn get_packages(
             WHERE package = p.id
             ORDER BY completed_at LIMIT 1
         )
-        {}
+        WHERE 1 {}
         ORDER BY p.name ASC;",
-        if maintainer_id.is_some() {
-            "WHERE m.id = $1"
-        } else {
-            ""
-        }
+        if maintainer_id.is_some() { "AND m.id = ?" } else { "" },
     );
 
-    let mut packages = Vec::new();
-    let mut rows = if let Some(maintainer_id) = maintainer_id {
-        sqlx::query_as::<_, Package>(&query_text)
-            .bind(maintainer_id)
-    } else {
-        sqlx::query_as::<_, Package>(&query_text)
+    let mut query = sqlx::query_as::<_, Package>(&query_text);
+
+    if let Some(maintainer_id) = maintainer_id {
+        query = query.bind(maintainer_id);
     }
-        .fetch(&mut *conn);
+
+    let mut packages = Vec::new();
+    let mut rows = query.fetch(&mut *conn);
+
     while let Some(row) = rows.try_next().await? {
         packages.push(row);
     }
