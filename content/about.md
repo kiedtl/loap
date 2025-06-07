@@ -21,8 +21,9 @@ continued operation are provided!
 This service is meant for packages which
 
 - Take an inordinately long time to build, or
-- Have a number of **build-only** dependencies which take a long time to build,
-  or pollute the builder's machine.
+- Have a number of **build-only** dependencies which take a long time to build
+  or pollute the builder's machine (*mesa*), or
+- Are depended on by a large number of packages (*zlib*).
 
 Packages which build quickly (such as `repo/extra/opendoas`, which can be
 installed in less than *1 second*) will not be included here.
@@ -30,3 +31,5 @@ installed in less than *1 second*) will not be included here.
 Packages which will not be commonly used will most likely not be included here,
 unless someone volunteers for it. This will include many language toolchains,
 niche browsers, etc.
+
+See also: [rationales](/rationales)
