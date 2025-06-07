@@ -39,20 +39,25 @@ nav {
 }
 
 h1 {
-    font-size: 22.5pt;
+    font-size: 23.5pt;
     color: #911;
 }
 
 h2 {
-    font-size: 18pt;
+    font-size: 20pt;
 }
 
 h3 {
-    font-size: 16pt;
+    font-size: 15pt;
+    color: #411;
 }
 
 h4 {
-    font-size: 14pt;
+    font-size: 12.5pt;
+}
+
+hr {
+    width: 90%;
 }
 
 table.list>tbody>tr>td, table.list>thead>tr>th {
