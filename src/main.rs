@@ -24,6 +24,10 @@ use serde_repr::{Serialize_repr, Deserialize_repr};
 use sqlx::{Row, FromRow, Connection, SqliteConnection};
 use tower_http::services::ServeDir;
 
+use log::{error, info};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::EnvFilter;
+
 const USER_ORPH: u32 = 0;
 const USER_CEMT: u32 = 2;
 
@@ -116,7 +120,6 @@ pub struct StaticPage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
 pub enum Page {
     Home,
     About,
@@ -161,7 +164,10 @@ macro_rules! try_or_500 {
     ($ex:expr) => {
         match $ex {
             Ok(value) => value,
-            Err(err) => return construct_500_page(err.into()),
+            Err(err) => {
+                error!("E: {:#}", err.to_string());
+                return construct_500_page(err.into());
+            },
         }
     }
 }
@@ -172,6 +178,14 @@ async fn main() -> AnyResult<()> {
         .unwrap_or("3000".to_string())
         .parse::<u16>()
         .unwrap();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .or_else(|_| EnvFilter::try_new("loap=info,tower_http=trace"))
+                .unwrap(),
+        )
+        .init();
 
     let mut pages = vec![];
     for entry in fs::read_dir("content")
@@ -227,6 +241,7 @@ async fn main() -> AnyResult<()> {
         .route("/api/b/report", post(api::report_build))
         .route("/api/b/ls", get(api::list_builds))
         .fallback_service(ServeDir::new("public"))
+        .layer(TraceLayer::new_for_http())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
@@ -242,6 +257,8 @@ async fn package_page(
 )
     -> impl IntoResponse
 {
+    info!("page: package");
+
     let pkg_id = match get_package_id(&state, &pkgname).await {
         Err(e) => return construct_500_page(e),
         Ok(None) => return construct_404_page(),
@@ -322,6 +339,8 @@ async fn maintainer_page(
 )
     -> impl IntoResponse
 {
+    info!("page: maintainer");
+
     let maintainer = match get_maintainer(&state, maintainer_name.clone()).await {
         Ok(Some(m)) => m,
         Ok(None) => return maud! {
@@ -394,6 +413,8 @@ async fn maintainer_page(
 }
 
 async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
+    info!("page: home");
+
     let packages = try_or_500!(get_packages(&state, None).await);
 
     maud! {
@@ -444,6 +465,8 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
+    info!("page: stats");
+
     let mut conn = state.db.lock().await;
 
     #[derive(Clone, FromRow)]
@@ -526,6 +549,7 @@ async fn static_page(
 ) -> impl IntoResponse {
     for page in &state.pages {
         if page.name == path {
+            info!("page: {}", page.name);
             return maud! {
                 Doc page=(page.meta.page.clone()) {
                     (Raw(page.html.clone()))
@@ -534,6 +558,7 @@ async fn static_page(
         }
     }
 
+    info!("page: 404 for {}", path);
     construct_404_page()
 }
 

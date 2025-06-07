@@ -12,6 +12,8 @@ use serde::{Serialize, Deserialize};
 use sqlx::Row;
 use uuid::Uuid;
 
+use log::{info, error};
+
 use crate::{
     AppState, AuthCheck,
     verify_maintainer, get_package_id, get_packages, get_builds_by_id,
@@ -34,7 +36,7 @@ where
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ServerError {
     inner: String,
 }
@@ -47,6 +49,7 @@ impl From<anyhow::Error> for ServerError {
 
 impl IntoResponse for ServerError {
     fn into_response(self) -> Response {
+        error!("handled api error: {}", self.inner);
         (StatusCode::INTERNAL_SERVER_ERROR, self.inner).into_response()
     }
 }
@@ -71,7 +74,7 @@ impl IntoResponse for ApiError {
 }
 
 
-#[derive(Copy, Clone, Deserialize)]
+#[derive(Copy, Clone, Debug, Deserialize)]
 pub struct DownloadByBuildId {
     id: u32,
 }
@@ -82,6 +85,8 @@ pub async fn download_by_build_id(
 )
     -> Result<AnyOf2<Redirect, ApiError>, String>
 {
+    info!("api: handling download_by_build_id {:?}", args);
+
     let mut conn = state.db.lock().await;
     let s3 = state.s3;
 
@@ -115,7 +120,7 @@ pub async fn download_by_build_id(
     ))
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ReportBuild {
     built_by: String,
     package: String,
@@ -132,6 +137,8 @@ pub async fn report_build(
 )
     -> Result<AnyOf2<String, ApiError>, String>
 {
+    info!("api: handling report_build {:?}", q);
+
     let mut conn = state.db.lock().await;
     let s3 = state.s3;
 
@@ -178,7 +185,7 @@ pub async fn report_build(
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct RequestUpload {
     built_by: String,
     completed_at: DateTime<Utc>,
@@ -187,7 +194,7 @@ pub struct RequestUpload {
     signature: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequestUploadResponse {
     signed_url: String,
     object_path: String,
@@ -205,6 +212,8 @@ pub async fn request_upload(
 )
     -> Result<AnyOf2<RequestUploadResponse, ApiError>, String>
 {
+    info!("api: handling request_upload {:?}", q);
+
     let mut conn = state.db.lock().await;
     let s3 = state.s3;
 
@@ -231,7 +240,7 @@ pub async fn request_upload(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ListPackages {
     m_id: Option<u32>,
     // TODO: for maintainer name
@@ -243,6 +252,8 @@ pub async fn list_packages(
 )
     -> Result<AnyOf2<String, ApiError>, String>
 {
+    info!("api: handling list_packages {:?}", q);
+
     let packages = get_packages(&state, q.m_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -252,7 +263,7 @@ pub async fn list_packages(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ListBuilds {
     p: String,
     // TODO: by package id
@@ -264,6 +275,8 @@ pub async fn list_builds(
 )
     -> Result<AnyOf2<String, ApiError>, ServerError>
 {
+    info!("api: handling list_builds {:?}", q);
+
     let Some(pkg_id) = get_package_id(&state, &q.p).await? else {
         return Ok(AnyOf2::B(ApiError::NotFound));
     };
