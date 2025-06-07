@@ -462,8 +462,10 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
             COALESCE(SUM(b.size), 0) AS total_size,
             COALESCE(AVG(b.size), 0) AS avg_size,
             COALESCE(AVG(b.completed_in), 0) AS avg_time
-        FROM Packages p
-        JOIN Builds   b ON b.package = p.id
+        FROM Packages    p
+        JOIN Builds      b ON b.package    = p.id
+        JOIN Maintainers m ON p.maintainer = m.id
+        WHERE m.id != 2 -- Exclude cemetery
         GROUP BY p.id
         ORDER BY downloads DESC, p.name ASC;"
     ).fetch_all(&mut *conn).await);
