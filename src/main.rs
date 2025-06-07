@@ -116,6 +116,7 @@ pub struct StaticPage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
 pub enum Page {
     Home,
     About,
@@ -451,6 +452,7 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
         downloads: u32,
         total_size: u32,
         avg_size: f32,
+        avg_time: f32,
     }
 
     let items = try_or_500!(sqlx::query_as::<_, Item>(
@@ -458,7 +460,8 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
             p.name AS pkg_name,
             COALESCE(SUM(b.downloads), 0) AS downloads,
             COALESCE(SUM(b.size), 0) AS total_size,
-            COALESCE(AVG(b.size), 0) AS avg_size
+            COALESCE(AVG(b.size), 0) AS avg_size,
+            COALESCE(AVG(b.completed_in), 0) AS avg_time
         FROM Packages p
         JOIN Builds   b ON b.package = p.id
         GROUP BY p.id
@@ -474,6 +477,10 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
         .max_by(|a, b| (a.avg_size as usize).cmp(&(b.avg_size as usize)))
         .expect("should be at least one package in the database!")
         .clone();
+    let longest_time = items.iter()
+        .max_by(|a, b| (a.avg_time as usize).cmp(&(b.avg_time as usize)))
+        .expect("should be at least one package in the database!")
+        .clone();
 
     maud! {
         Doc page=(Page::Stats) {
@@ -485,8 +492,14 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
                     (utils::fmt_size(total_space_used)) " / 10 GB"
                 }
                 div {
-                    b { "heaviest package (average size): " }
-                    (utils::fmt_size(heaviest.avg_size.round() as u32))
+                    b { "largest package (avg): " }
+                    (longest_time.pkg_name)
+                    " (" (utils::fmt_size(heaviest.avg_size.round() as u32)) ")"
+                }
+                div {
+                    b { "longest compiles (avg): " }
+                    (longest_time.pkg_name)
+                    " (" (utils::fmt_duration(longest_time.avg_time.round() as i64)) ")"
                 }
                 div {
                     b { "total downloads: " }
