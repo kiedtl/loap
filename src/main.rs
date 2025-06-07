@@ -232,6 +232,9 @@ async fn package_page(
         Err(e) => return construct_500_page(e),
     };
 
+    let total_size = builds.iter().fold(0, |a, b| a + b.size);
+    let average_size = total_size / builds.len() as u32;
+
     maud! {
         Doc page=(Page::Other(pkgname.clone())) {
             h2 { "Package: " (pkgname.clone()) }
@@ -248,6 +251,8 @@ async fn package_page(
                 div { b { "maintainer: " } (package_info.maintainer_name) }
                 div { b { "total builds: " } (package_info.build_count) }
                 div { b { "total downloads: " } (package_info.download_count) }
+                div { b { "average size: " } (utils::fmt_size(average_size)) }
+                div { b { "total size: " } (utils::fmt_size(total_size)) }
             }
 
             h3 { "Builds" }
