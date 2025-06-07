@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     AppState, AuthCheck,
-    verify_maintainer, get_package_id, get_packages, get_builds,
+    verify_maintainer, get_package_id, get_packages, get_builds_by_id,
 };
 
 pub enum AnyOf2<A, B> {
@@ -268,7 +268,7 @@ pub async fn list_builds(
         return Ok(AnyOf2::B(ApiError::NotFound));
     };
 
-    let builds = get_builds(&state, pkg_id)
+    let builds = get_builds_by_id(&state, pkg_id)
         .await?;
 
     Ok(AnyOf2::A(

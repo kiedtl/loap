@@ -55,6 +55,7 @@ pub struct Maintainer {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromRow)]
 pub struct Build {
     id: u32,
+    package_id: u32,
     version: String,
     size: u32,
     completed_at: DateTime<Utc>,
@@ -64,32 +65,43 @@ pub struct Build {
     builder_name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
 pub struct Package {
+    id: u32,
     name: String,
     maintainer_id: u32,
     maintainer_name: String,
-    repo_forge_url: String,
-    repo_name: String,
-    repo_org: String,
-    repo_dir: String,
+    #[sqlx(flatten)]
+    repo: RepoInfo,
     build_version: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
+pub struct RepoInfo {
+    #[sqlx(rename = "repo_forge_url")]
+    forge_url: String,
+    #[sqlx(rename = "repo_name")]
+    name: String,
+    #[sqlx(rename = "repo_org")]
+    org: String,
+    #[sqlx(rename = "repo_dir")]
+    dir: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
 pub struct PackageInfo {
     id: u32,
     name: String,
     maintainer_name: String,
-    repo_forge_url: String,
-    repo_name: String,
-    repo_org: String,
-    repo_dir: String,
+    #[sqlx(flatten)]
+    repo: RepoInfo,
     build_count: u32,
     download_count: u32,
 }
 
-const NAV_PAGES: &[Page] = &[Page::Home, Page::About, Page::Faq, Page::Orphanage, Page::Cemetery];
+const NAV_PAGES: &[Page] = &[
+    Page::Home, Page::About, Page::Stats, Page::Faq, Page::Orphanage, Page::Cemetery
+];
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Frontmatter {
@@ -107,6 +119,7 @@ pub struct StaticPage {
 pub enum Page {
     Home,
     About,
+    Stats,
     Faq,
     Orphanage,
     Cemetery,
@@ -120,6 +133,7 @@ impl Page {
         match self {
             Page::Home => "packages",
             Page::About => "about",
+            Page::Stats => "statistics",
             Page::Faq => "faq",
             Page::Orphanage => "orphanage",
             Page::Cemetery => "cemetery",
@@ -133,6 +147,7 @@ impl Page {
         match self {
             Page::Home => "/",
             Page::About => "/about",
+            Page::Stats => "/ps",
             Page::Faq => "/faq",
             Page::Orphanage => "/m/orphanage",
             Page::Cemetery => "/m/cemetery",
@@ -192,6 +207,7 @@ async fn main() -> AnyResult<()> {
 
     let app = Router::new()
         .route("/", get(home_page))
+        .route("/ps", get(stats_page))
         .route("/{page}", get(static_page))
         .route("/p/{pkgname}", get(package_page))
         .route("/m/{maintainer_name}", get(maintainer_page))
@@ -227,7 +243,7 @@ async fn package_page(
         Err(e) => return construct_500_page(e),
     };
 
-    let builds = match get_builds(&state, pkg_id).await {
+    let builds = match get_builds_by_id(&state, pkg_id).await {
         Ok(b) => b,
         Err(e) => return construct_500_page(e),
     };
@@ -239,14 +255,10 @@ async fn package_page(
         Doc page=(Page::Other(pkgname.clone())) {
             h2 { "Package: " (pkgname.clone()) }
 
-            div style="column-count: 3" {
+            div style="column-count: 2" {
                 div {
                     b { "origin: " }
-                    PackageOriginView
-                        forge=(&package_info.repo_forge_url)
-                        org=(&package_info.repo_org)
-                        name=(&package_info.repo_name)
-                        dir=(&package_info.repo_dir);
+                    RepoView r=(&package_info.repo);
                 }
                 div { b { "maintainer: " } (package_info.maintainer_name) }
                 div { b { "total builds: " } (package_info.build_count) }
@@ -435,6 +447,69 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
     }.render()
 }
 
+async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
+    let mut conn = state.db.lock().await;
+
+    #[derive(Clone, FromRow)]
+    struct Item {
+        pkg_name: String,
+        downloads: u32,
+        total_size: u32,
+        avg_size: f32,
+    }
+
+    let items = sqlx::query_as::<_, Item>(
+        "SELECT
+            p.name AS pkg_name,
+            COALESCE(SUM(b.downloads), 0) AS downloads,
+            COALESCE(SUM(b.size), 0) AS total_size,
+            COALESCE(AVG(b.size), 0) AS avg_size
+        FROM Packages p
+        JOIN Builds   b ON b.package = p.id
+        GROUP BY p.id
+        ORDER BY downloads DESC, p.name ASC;"
+    ).fetch_all(&mut *conn).await.unwrap();
+
+    let total_space_used = items.iter().fold(0, |a, b| a + b.total_size);
+    let total_downloads = items.iter().fold(0, |a, b| a + b.downloads);
+
+    let most_downloaded = items[0].clone();
+    let least_downloaded = items[items.len() - 1].clone();
+    let heaviest = items.iter()
+        .max_by(|a, b| (a.avg_size as usize).cmp(&(b.avg_size as usize)))
+        .expect("should be at least one package in the database!")
+        .clone();
+
+    maud! {
+        Doc page=(Page::Stats) {
+            h2 { "Statistics" }
+
+            div style="column-count: 2;column-gap: 2.5em" {
+                div {
+                    b { "total size of tarballs: " }
+                    (utils::fmt_size(total_space_used)) " / 10 GB"
+                }
+                div {
+                    b { "heaviest package (average size): " }
+                    (utils::fmt_size(heaviest.avg_size.round() as u32))
+                }
+                div {
+                    b { "total downloads: " }
+                    (total_downloads)
+                }
+                div {
+                    b { "most downloaded: " }
+                    (most_downloaded.pkg_name) " (" (most_downloaded.downloads) ")"
+                }
+                div {
+                    b { "least downloaded: " }
+                    (least_downloaded.pkg_name) " (" (least_downloaded.downloads) ")"
+                }
+            }
+        }
+    }.render()
+}
+
 async fn static_page(
     State(state): State<AppState>,
     Path(path): Path<String>
@@ -522,11 +597,7 @@ fn package_view<'a>(p: &'a Package) -> impl Renderable + use<'a> {
         tr {
             td { (p.name.clone()) }
             td {
-                PackageOriginView
-                    forge=(&p.repo_forge_url)
-                    org=(&p.repo_org)
-                    name=(&p.repo_name)
-                    dir=(&p.repo_dir);
+                RepoView r=(&p.repo);
             }
             td #m {
                 (p.build_version.clone().unwrap_or("(none)".to_string()))
@@ -538,12 +609,10 @@ fn package_view<'a>(p: &'a Package) -> impl Renderable + use<'a> {
 }
 
 #[component]
-fn package_origin_view<'a>(forge: &'a str, org: &'a str, name: &'a str, dir: &'a str)
-    -> impl Renderable + use<'a>
-{
+fn repo_view<'a>(r: &'a RepoInfo) -> impl Renderable + use<'a> {
     maud! {
-        a href=(forge) {
-            (org)wbr;" → "(name)wbr;" → "(dir)
+        a href=(r.forge_url) {
+            (r.org)wbr;" → "(r.name)wbr;" → "(r.dir)
         }
     }
 }
@@ -607,7 +676,7 @@ async fn get_packages(
 
     let query_text = format!(
         "SELECT
-            p.name,
+            p.id, p.name,
             m.id        AS maintainer_id,
             m.name      AS maintainer_name,
             r.name      AS repo_name,
@@ -676,7 +745,7 @@ async fn get_package_id(state: &AppState, pkgname: &str) -> AnyResult<Option<u32
     })
 }
 
-async fn get_builds(state: &AppState, pkgid: u32) -> AnyResult<Vec<Build>> {
+async fn get_builds_by_id(state: &AppState, pkgid: u32) -> AnyResult<Vec<Build>> {
     let mut conn = state.db.lock().await;
 
     let mut builds = Vec::new();
@@ -684,6 +753,7 @@ async fn get_builds(state: &AppState, pkgid: u32) -> AnyResult<Vec<Build>> {
         "SELECT
             b.id, b.version, b.size, b.completed_at, b.completed_in,
             b.downloads, b.object_path,
+            b.package as package_id,
             m.name as builder_name
         FROM Builds b
         JOIN Maintainers m ON m.id = b.built_by
