@@ -156,6 +156,15 @@ impl Page {
     }
 }
 
+macro_rules! try_or_500 {
+    ($ex:expr) => {
+        match $ex {
+            Ok(value) => value,
+            Err(err) => return construct_500_page(err.into()),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> AnyResult<()> {
     let port = std::env::var("PORT")
@@ -237,16 +246,8 @@ async fn package_page(
         Ok(None) => return construct_404_page(),
         Ok(Some(pkg_id)) => pkg_id,
     };
-
-    let package_info = match get_package_info(&state, pkg_id).await {
-        Ok(p) => p,
-        Err(e) => return construct_500_page(e),
-    };
-
-    let builds = match get_builds_by_id(&state, pkg_id).await {
-        Ok(b) => b,
-        Err(e) => return construct_500_page(e),
-    };
+    let package_info = try_or_500!(get_package_info(&state, pkg_id).await);
+    let builds = try_or_500!(get_builds_by_id(&state, pkg_id).await);
 
     let total_size = builds.iter().fold(0, |a, b| a + b.size);
     let average_size = total_size / builds.len() as u32;
@@ -332,10 +333,7 @@ async fn maintainer_page(
         Err(e) => return construct_500_page(e),
     };
 
-    let packages = match get_packages(&state, Some(maintainer.id)).await {
-        Ok(p) => p,
-        Err(e) => return construct_500_page(e),
-    };
+    let packages = try_or_500!(get_packages(&state, Some(maintainer.id)).await);
 
     let page = match maintainer.id {
         USER_ORPH => Page::Orphanage,
@@ -395,10 +393,7 @@ async fn maintainer_page(
 }
 
 async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
-    let packages = match get_packages(&state, None).await {
-        Ok(p) => p,
-        Err(e) => return construct_500_page(e),
-    };
+    let packages = try_or_500!(get_packages(&state, None).await);
 
     maud! {
         Doc page=(Page::Home) {
@@ -458,7 +453,7 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
         avg_size: f32,
     }
 
-    let items = sqlx::query_as::<_, Item>(
+    let items = try_or_500!(sqlx::query_as::<_, Item>(
         "SELECT
             p.name AS pkg_name,
             COALESCE(SUM(b.downloads), 0) AS downloads,
@@ -468,7 +463,7 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
         JOIN Builds   b ON b.package = p.id
         GROUP BY p.id
         ORDER BY downloads DESC, p.name ASC;"
-    ).fetch_all(&mut *conn).await.unwrap();
+    ).fetch_all(&mut *conn).await);
 
     let total_space_used = items.iter().fold(0, |a, b| a + b.total_size);
     let total_downloads = items.iter().fold(0, |a, b| a + b.downloads);

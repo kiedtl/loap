@@ -140,6 +140,8 @@ upload_existing_report() {
     log_done
 }
 
+log 'Building as %s, using key %s' "$LOAP_MAINTAINER" "$LOAP_PRIVATE_KEY"
+
 if [ -f "$1" ] && [ -f "$2" ]
 then
     upload_existing_report "$1" "$2"
