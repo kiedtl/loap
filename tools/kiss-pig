@@ -5,6 +5,8 @@
 
 log_no_nl() {
     fmt="$1"; shift
+    # Intended.
+    # shellcheck disable=SC2059
     printf "\x1b[34;1m[loap]\x1b[m $fmt" "$@" >&2
 }
 
@@ -18,7 +20,11 @@ checked_curl() {
         log 'Curl failed (exit code %d)' "$?"
         exit 1
     })"
+
+    # Shellcheck thinks $q/$d are variables, and complains.
+    # shellcheck disable=SC2016
     code="$(printf '%s' "$res" | sed '$q;d')"
+    # shellcheck disable=SC2016
     data="$(printf '%s' "$res" | sed '$d')"
 
     [ "$code" -ge 400 ] && {
@@ -36,7 +42,7 @@ fmt_size() {
         if   [ "$s" -ge 1000000000 ]; then printf 'scale=3; %d/1000000000; print "GB"' "$s";
         elif [ "$s" -ge 1000000    ]; then printf 'scale=2; %d/1000000; print "MB"' "$s";
         elif [ "$s" -ge 1000       ]; then printf 'scale=1; %d/1000; print "KB"' "$s";
-        else printf '%d; print "bytes"';
+        else printf '%d; print "bytes"' "$s";
         fi
     ) | bc | tr '\n' ' '
     printf '\n'
@@ -57,7 +63,7 @@ package_folder="$({
 } | head -n1)"
 
 cd "$package_folder"
-version="$(cat version | tr ' ' -)"
+version="$(tr ' ' - < version)"
 
 log 'Looking for builds of %s@%s' "$package" "$version"
 

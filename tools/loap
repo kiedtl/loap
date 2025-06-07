@@ -3,15 +3,18 @@
 # (c) Kiëd Llaentenn <kiedtl@tilde.team>
 # See the COPYING file for copyright information.
 
-LOAP_PRIVATE_KEY="${KEY:-~/.ssh/id_loap}"
-LOAP_MAINTAINER="${MAINTAINER:-$USER}"
-LOAP_SERVER="https://loap.k1sslinux.org"
+# Configuration
+LOAP_PRIVATE_KEY="${LOAP_PRIVATE_KEY:-~/.ssh/id_loap}"
+LOAP_MAINTAINER="${LOAP_MAINTAINER:-$USER}"
+
+# Hardcoded, not really intended to be configured.
+SERVER="https://loap.k1sslinux.org"
 
 export MAKEFLAGS="-j $(($(nproc)-1))"
-export RUSTFLAGS="-Z threads=$(($(nproc)-1)) -C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold"
 export CFLAGS="-march=x86-64-v2 -pipe -O2 -fuse-ld=mold"
 export CXXFLAGS="$CFLAGS"
-export CC="gcc"
+export CC="sccache gcc"
+export RUSTFLAGS="-C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold"
 
 export CCACHE_PREFIX=sccache
 export CMAKE_C_COMPILER_LAUNCHER=sccache
@@ -20,6 +23,8 @@ export RUSTC_WRAPPER=sccache
 
 log_no_nl() {
     fmt="$1"; shift
+    # Intended.
+    # shellcheck disable=SC2059
     printf "\x1b[34;1m[loap]\x1b[m $fmt" "$@" >&2
 }
 
@@ -30,7 +35,7 @@ log() {
 
 last_message=
 log_begin() {
-    last_message="$@"
+    last_message="$*"
     log_no_nl "$@"
     printf '...\n' >&2
 }
@@ -46,7 +51,11 @@ checked_curl() {
         log 'Curl failed (exit code %d)' "$?"
         exit 1
     })"
+
+    # Shellcheck thinks $q/$d are variables, and complains.
+    # shellcheck disable=SC2016
     code="$(printf '%s' "$res" | sed '$q;d')"
+    # shellcheck disable=SC2016
     data="$(printf '%s' "$res" | sed '$d')"
 
     [ "$code" -ge 400 ] && {
@@ -58,8 +67,8 @@ checked_curl() {
     printf '%s' "$data"
 }
 
-package="$(basename $PWD)"
-version="$(cat version | sed 's/ /-/')"
+package="$(basename "$PWD")"
+version="$(sed 's/ /-/' < version)"
 
 upload_new() {
     began="$(date +%s)"
@@ -70,7 +79,7 @@ upload_new() {
 
     orig_tarball="$HOME/.cache/kiss/bin/$package@$version.tar.gz"
     tarball="$package@$version.tar.xz"
-    gzip -cd $orig_tarball | xz -qcT0 -9 > $tarball
+    gzip -cd "$orig_tarball" | xz -qcT0 -9 > "$tarball"
 
     signature_text="$LOAP_MAINTAINER:$package:$completed_at"
     signature="$(printf '%s' "$signature_text" | \
@@ -88,7 +97,7 @@ upload_new() {
     printf '%s' "$report" > "report_$package@${version}.json"
 
     log_begin "Requesting upload URL"
-    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/b/upload" -d @- \
+    response="$(printf '%s' "$report" | checked_curl "$SERVER/api/b/upload" -d @- \
         -H "Content-Type: application/json")"
     upload_url="$(printf '%s' "$response" | jq -r .signed_url)"
     object_path="$(printf '%s' "$response" | jq -r .object_path)"
@@ -99,8 +108,8 @@ upload_new() {
     log_done
 
     log_begin "Making report"
-    checked_curl -i \
-        "$LOAP_SERVER/api/b/report" \
+    checked_curl \
+        "$SERVER/api/b/report" \
         -H "Content-Type: application/json" \
         -d @- <<EOF
     {
@@ -121,7 +130,7 @@ upload_existing_report() {
     tarball="$2"
 
     log_begin "Requesting upload URL"
-    response="$(printf '%s' "$report" | checked_curl "$LOAP_SERVER/api/b/upload" -d @- \
+    response="$(printf '%s' "$report" | checked_curl "$SERVER/api/b/upload" -d @- \
         -H "Content-Type: application/json")"
     upload_url="$(printf '%s' "$response" | jq -r .signed_url)"
     object_path="$(printf '%s' "$response" | jq -r .object_path)"
@@ -135,7 +144,7 @@ upload_existing_report() {
     printf '%s' "$report" | \
         jq ". += { \"object_path\": \"$object_path\" }" | \
         checked_curl \
-            "$LOAP_SERVER/api/b/report" -d @- \
+            "$SERVER/api/b/report" -d @- \
             -H "Content-Type: application/json"
     log_done
 }
