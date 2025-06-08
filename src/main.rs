@@ -268,7 +268,7 @@ async fn package_page(
     let builds = try_or_500!(get_builds_by_id(&state, pkg_id).await);
 
     let total_size = builds.iter().fold(0, |a, b| a + b.size);
-    let average_size = total_size / builds.len() as u32;
+    let average_size = if builds.len() == 0 { 0 } else { total_size / builds.len() as u32 };
 
     maud! {
         Doc page=(Page::Other(pkgname.clone())) {
@@ -399,7 +399,7 @@ async fn maintainer_page(
                         th { "origin" }
                         th { "version" }
                         th { "assigned" }
-                        th { "builds" }
+                        th { "info" }
                     }
                 }
                 tbody {
