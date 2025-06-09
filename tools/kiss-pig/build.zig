@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const known_folders = b.dependency("known_folders", .{}).module("known-folders");
+    const clap = b.dependency("clap", .{}).module("clap");
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -19,7 +20,9 @@ pub fn build(b: *std.Build) void {
     exe.linkLibC();
     exe.linkSystemLibrary("curl");
     exe.linkSystemLibrary("z");
+
     exe.root_module.addImport("known-folders", known_folders);
+    exe.root_module.addImport("clap", clap);
 
     b.installArtifact(exe);
 

@@ -12,6 +12,7 @@ const process = std.process;
 
 const c_alloc = std.heap.c_allocator;
 const kf = @import("known-folders");
+const clap = @import("clap");
 
 pub const std_options = std.Options{
     .logFn = myLogFn,
@@ -22,31 +23,73 @@ pub fn main() void {
     defer arena.deinit();
     const alloc = arena.allocator();
 
+    const HELP =
+        \\Usage: kiss pig [options] <PKG> [VERSION]
+        \\
+        \\Version must be in the <package>-<revision> format
+        \\e.g. 1.2.3-1 (instead of "1.2.3 1"). If not provided,
+        \\KISS_PATH will be searched for the package directory.
+        \\
+        \\Options:
+        \\     -h, --help          Show this message.
+        \\
+        \\
+    ;
+
+    const params = comptime clap.parseParamsComptime(
+        \\-h, --help
+        \\<str>
+        \\<str>
+    );
+
+    var diag = clap.Diagnostic{};
+    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        .diagnostic = &diag,
+        .allocator = alloc,
+    }) catch |err| {
+        diag.report(std.io.getStdErr().writer(), err) catch {};
+        return;
+    };
+    defer res.deinit();
+
+    if (res.args.help != 0) {
+        std.io.getStdErr().writer().print("{s}", .{HELP}) catch {};
+        return;
+    }
+
+    const package = res.positionals[0] orelse {
+        std.io.getStdErr().writer().print("{s}", .{HELP}) catch {};
+        return;
+    };
+    const version = if (res.positionals[1]) |version| b: {
+        break :b version;
+    } else b: {
+        const kiss_path = KissPath.initAndPopulate(alloc) catch |e|
+            die("Couldn't read and parse KISS_PATH: {}", .{e});
+
+        var dir = kiss_path.findPackage(package) catch |e|
+            die("Couldn't find package '{s}': {}", .{ package, e }) orelse
+            die("Couldn't find package '{s}' in KISS_PATH.", .{package});
+        defer dir.close();
+
+        const version_str = dir.readFileAlloc(alloc, "version", 128) catch |e|
+            die("Couldn't read `version` file: {}", .{e});
+
+        // LOAP expects versions to be in the format used in file names, i.e. 1.2.3-1 not "1.2.3 1"
+        for (version_str) |*ch|
+            if (ch.* == ' ') {
+                ch.* = '-';
+            };
+
+        break :b mem.trimRight(u8, version_str, "\n ");
+    };
+
     const mycurl = c.curl_easy_init() orelse @panic("libcurl isn't cooperating");
     defer c.curl_easy_cleanup(mycurl);
 
-    const kiss_path = KissPath.initAndPopulate(alloc) catch |e|
-        die("Couldn't read and parse KISS_PATH: {}", .{e});
-
-    const package = "opendoas";
-    var dir = kiss_path.findPackage(package) catch |e|
-        die("Couldn't find package '{s}': {}", .{ package, e }) orelse
-        die("Couldn't find package '{s}' in KISS_PATH.", .{package});
-    defer dir.close();
-
-    const version_str = dir.readFileAlloc(alloc, "version", 128) catch |e|
-        die("Couldn't read `version` file: {}", .{e});
-
-    // LOAP expects versions to be in the format used in file names, i.e. 1.2.3-1 not "1.2.3 1"
-    for (version_str) |*ch|
-        if (ch.* == ' ') {
-            ch.* = '-';
-        };
-    const version = mem.trimRight(u8, version_str, "\n ");
-
     std.log.info("Looking for \x1b[1m{s}\x1b[m@\x1b[1m{s}\x1b[m", .{ package, version });
 
-    const url = fmt.allocPrint(alloc, "https://loap.k1sslinux.org/api/b/ls?p={s}", .{package}) catch
+    const url = fmt.allocPrint(alloc, "https://loap.k1sslinux.org/api/b/ls?p={s}\x00", .{package}) catch
         @panic("Close a few Firefox tabs please");
 
     _ = c.curl_easy_setopt(mycurl, c.CURLOPT_URL, url.ptr);
@@ -64,9 +107,9 @@ pub fn main() void {
     }.f);
     _ = c.curl_easy_setopt(mycurl, c.CURLOPT_WRITEDATA, &buffer);
 
-    const res = c.curl_easy_perform(mycurl);
-    if (res != c.CURLE_OK)
-        die("Couldn't complete request: {s}", .{c.curl_easy_strerror(res)});
+    const curl_res = c.curl_easy_perform(mycurl);
+    if (curl_res != c.CURLE_OK)
+        die("Couldn't complete request: {s}", .{c.curl_easy_strerror(curl_res)});
 
     var http_code: u64 = undefined;
     _ = c.curl_easy_getinfo(mycurl, c.CURLINFO_RESPONSE_CODE, &http_code);
@@ -111,7 +154,7 @@ pub fn main() void {
 
     std.log.info("Waiting for curl...", .{});
 
-    const dl_url = fmt.allocPrint(alloc, "https://loap.k1sslinux.org/api/b/dl?id={}", .{build.id}) catch
+    const dl_url = fmt.allocPrint(alloc, "https://loap.k1sslinux.org/api/b/dl?id={}\x00", .{build.id}) catch
         @panic("Close a few Firefox tabs please");
     _ = c.curl_easy_setopt(mycurl, c.CURLOPT_URL, dl_url.ptr);
     _ = c.curl_easy_setopt(mycurl, c.CURLOPT_WRITEDATA, tarball_fp);
@@ -133,7 +176,10 @@ pub fn main() void {
     }.f);
     // XFERINFOFUNCTION has no effect otherwise
     _ = c.curl_easy_setopt(mycurl, c.CURLOPT_NOPROGRESS, @as(usize, 0));
-    _ = c.curl_easy_perform(mycurl);
+
+    const curl_res2 = c.curl_easy_perform(mycurl);
+    if (curl_res2 != c.CURLE_OK)
+        die("Couldn't complete request: {s}", .{c.curl_easy_strerror(curl_res2)});
 }
 
 pub fn die(comptime format: []const u8, args: anytype) noreturn {
@@ -151,8 +197,8 @@ pub fn myLogFn(
 
     const level_str = switch (level) {
         .debug, .info => "",
-        .warn => "\x1b[33m(!!!)\x1b[m ",
-        .err => "\x1b[1;31merror\x1b[m ",
+        .warn => "\x1b[33m(!!)\x1b[m ",
+        .err => "\x1b[1;31merr:\x1b[m ",
     };
 
     std.debug.lockStdErr();
