@@ -434,7 +434,7 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
                         th { "origin" }
                         th { "version" }
                         th { "assigned" }
-                        th { "builds" }
+                        th { "info" }
                     }
                 }
                 tbody {
@@ -488,7 +488,7 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
         FROM Packages    p
         JOIN Builds      b ON b.package    = p.id
         JOIN Maintainers m ON p.maintainer = m.id
-        WHERE m.id != 2 -- Exclude cemetery
+        WHERE m.id != 2 AND b.completed_in > 0 -- Exclude cemetery & never-built packages
         GROUP BY p.id
         ORDER BY downloads DESC, p.name ASC;"
     ).fetch_all(&mut *conn).await);
@@ -498,14 +498,16 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
 
     let most_downloaded = items[0].clone();
     let least_downloaded = items[items.len() - 1].clone();
-    let heaviest = items.iter()
-        .max_by(|a, b| (a.avg_size as usize).cmp(&(b.avg_size as usize)))
-        .expect("should be at least one package in the database!")
-        .clone();
-    let longest_time = items.iter()
-        .max_by(|a, b| (a.avg_time as usize).cmp(&(b.avg_time as usize)))
-        .expect("should be at least one package in the database!")
-        .clone();
+
+    macro_rules! wr {
+        ($ex:expr) => {
+            $ex.expect("should be at least one package in database").clone()
+        }
+    }
+
+    let most_time = wr!(items.iter().max_by(|a, b| (a.avg_time as usize).cmp(&(b.avg_time as usize))));
+    let least_time = wr!(items.iter().min_by(|a, b| (a.avg_time as usize).cmp(&(b.avg_time as usize))));
+    let heaviest = wr!(items.iter().max_by(|a, b| (a.avg_size as usize).cmp(&(b.avg_size as usize))));
 
     maud! {
         Doc page=(Page::Stats) {
@@ -518,13 +520,18 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
                 }
                 div {
                     b { "largest package (avg): " }
-                    (longest_time.pkg_name)
+                    (heaviest.pkg_name)
                     " (" (utils::fmt_size(heaviest.avg_size.round() as u32)) ")"
                 }
                 div {
                     b { "longest compiles (avg): " }
-                    (longest_time.pkg_name)
-                    " (" (utils::fmt_duration(longest_time.avg_time.round() as i64)) ")"
+                    (most_time.pkg_name)
+                    " (" (utils::fmt_duration(most_time.avg_time.round() as i64)) ")"
+                }
+                div {
+                    b { "shortest compiles (avg): " }
+                    (least_time.pkg_name)
+                    " (" (utils::fmt_duration(least_time.avg_time.round() as i64)) ")"
                 }
                 div {
                     b { "total downloads: " }
