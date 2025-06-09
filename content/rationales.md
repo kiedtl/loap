@@ -1,5 +1,6 @@
 ---
-page: "rationales"
+page:
+    Other: "rationales"
 ---
 
 ## Rationales
