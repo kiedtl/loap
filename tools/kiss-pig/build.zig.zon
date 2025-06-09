@@ -1,0 +1,18 @@
+.{
+    .name = .kiss_pig,
+    .version = "0.1.0",
+    .fingerprint = 0x653fdc7354513371, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.0-dev.3452+0367d684f",
+
+    .dependencies = .{
+        .known_folders = .{
+            .url = "git+https://github.com/ziglibs/known-folders.git#aa24df42183ad415d10bc0a33e6238c437fc0f59",
+            .hash = "known_folders-0.0.0-Fy-PJtLDAADGDOwYwMkVydMSTp_aN-nfjCZw6qPQ2ECL",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
