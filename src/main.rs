@@ -12,9 +12,12 @@ use hypertext::Raw;
 
 use anyhow::{Context, Result as AnyResult};
 use axum::{
-    extract::{Path, State},
+    http::{Uri, StatusCode},
+    extract::{Path, State, Request},
+    body::Body,
     routing::{post, get}, Router,
     response::{IntoResponse},
+    handler::HandlerWithoutStateExt,
 };
 use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
@@ -22,6 +25,7 @@ use object_store::aws::{AmazonS3, AmazonS3Builder};
 use serde::{Serialize, Deserialize};
 use serde_repr::{Serialize_repr, Deserialize_repr};
 use sqlx::{Row, FromRow, Connection, SqliteConnection};
+use tower::util::ServiceExt;
 use tower_http::services::ServeDir;
 
 use log::{error, info};
@@ -232,7 +236,6 @@ async fn main() -> AnyResult<()> {
     let app = Router::new()
         .route("/", get(home_page))
         .route("/ps", get(stats_page))
-        .route("/{page}", get(static_page))
         .route("/p/{pkgname}", get(package_page))
         .route("/m/{maintainer_name}", get(maintainer_page))
         .route("/api/p/ls", get(api::list_packages))
@@ -240,7 +243,7 @@ async fn main() -> AnyResult<()> {
         .route("/api/b/upload", post(api::request_upload))
         .route("/api/b/report", post(api::report_build))
         .route("/api/b/ls", get(api::list_builds))
-        .fallback_service(ServeDir::new("public"))
+        .fallback(static_page)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -270,7 +273,7 @@ async fn package_page(
     let total_size = builds.iter().fold(0, |a, b| a + b.size);
     let average_size = if builds.len() == 0 { 0 } else { total_size / builds.len() as u32 };
 
-    maud! {
+    let page = maud! {
         Doc page=(Page::Other(pkgname.clone())) {
             h2 { "Package: " (pkgname.clone()) }
 
@@ -330,7 +333,9 @@ async fn package_page(
                 }
             }
         }
-    }.render()
+    }.render();
+
+    (StatusCode::OK, page)
 }
 
 async fn maintainer_page(
@@ -343,13 +348,13 @@ async fn maintainer_page(
 
     let maintainer = match get_maintainer(&state, maintainer_name.clone()).await {
         Ok(Some(m)) => m,
-        Ok(None) => return maud! {
+        Ok(None) => return (StatusCode::OK, maud! {
             Doc page=(Page::NotFound) {
                 h2 { (maintainer_name.clone()) }
                 p { "This person doesn't exist." }
                 p { "(Want to change that? Ping someone in #kisslinux.)" }
             }
-        }.render(),
+        }.render()),
         Err(e) => return construct_500_page(e),
     };
 
@@ -361,7 +366,7 @@ async fn maintainer_page(
         _ => Page::Other(maintainer_name.clone()),
     };
 
-    maud! {
+    let page = maud! {
         Doc page=(page.clone()) {
             h2 { (maintainer_name.clone()) }
 
@@ -409,7 +414,9 @@ async fn maintainer_page(
                 }
             }
         }
-    }.render()
+    }.render();
+
+    (StatusCode::OK, page)
 }
 
 async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
@@ -417,7 +424,7 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
 
     let packages = try_or_500!(get_packages(&state, None).await);
 
-    maud! {
+    let page = maud! {
         Doc page=(Page::Home) {
             h2 { "Packages" }
 
@@ -461,7 +468,9 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
                 "# }
             }
         }
-    }.render()
+    }.render();
+
+    (StatusCode::OK, page)
 }
 
 async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
@@ -509,7 +518,7 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
     let least_time = wr!(items.iter().min_by(|a, b| (a.avg_time as usize).cmp(&(b.avg_time as usize))));
     let heaviest = wr!(items.iter().max_by(|a, b| (a.avg_size as usize).cmp(&(b.avg_size as usize))));
 
-    maud! {
+    let page = maud! {
         Doc page=(Page::Stats) {
             h2 { "Statistics" }
 
@@ -547,43 +556,71 @@ async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
                 }
             }
         }
-    }.render()
+    }.render();
+
+    (StatusCode::OK, page)
 }
 
 async fn static_page(
     State(state): State<AppState>,
-    Path(path): Path<String>
+    uri: Uri,
 ) -> impl IntoResponse {
+    let path = uri.path()
+        .trim_start_matches("/"); // path() returns '/faq' instead of just 'faq'
+
+    // First, try a loaded HTML page
     for page in &state.pages {
-        if page.name == path {
+        if page.name == path
+        || page.name == format!("{path}.html")
+        {
             info!("page: {}", page.name);
-            return maud! {
+            return api::AnyOf2::A((StatusCode::OK, maud! {
                 Doc page=(page.meta.page.clone()) {
                     (Raw(page.html.clone()))
                 }
-            }.render();
+            }.render()));
         }
     }
 
-    info!("page: 404 for {}", path);
+    // Then check for a public file...
+    info!("page: fallback to servdir for {}", path);
+    let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    match ServeDir::new("public")
+        .not_found_service(e404_page.into_service())
+        .oneshot(req)
+        .await
+    {
+        Ok(res) => api::AnyOf2::B(res),
+        Err(err) => api::AnyOf2::A(construct_500_page(err.into())),
+    }
+}
+
+// Async wrapper around construct_404_page(), since non-async doesn't implement Handler.
+async fn e404_page() -> impl IntoResponse {
     construct_404_page()
 }
 
-fn construct_500_page(e: anyhow::Error) -> Rendered<String> {
-    maud! {
-        Doc page=(Page::Error) {
-            h2 { "500 Internal Server Error" }
-            p { (e.to_string()) }
-        }
-    }.render()
+fn construct_500_page(e: anyhow::Error) -> (StatusCode, Rendered<String>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        maud! {
+            Doc page=(Page::Error) {
+                h2 { "500 Internal Server Error" }
+                p { (e.to_string()) }
+            }
+        }.render()
+    )
 }
 
-fn construct_404_page() -> Rendered<String> {
-    maud! {
-        Doc page=(Page::NotFound) {
-            h2 { "404 Not Found" }
-        }
-    }.render()
+fn construct_404_page() -> (StatusCode, Rendered<String>) {
+    (
+        StatusCode::NOT_FOUND,
+        maud! {
+            Doc page=(Page::NotFound) {
+                h2 { "404 Not Found" }
+            }
+        }.render()
+    )
 }
 
 struct Doc<R: Renderable> {
@@ -592,22 +629,22 @@ struct Doc<R: Renderable> {
 }
 
 impl<R: Renderable> Renderable for Doc<R> {
-        fn render_to(&self, output: &mut String) {
-            maud! {
-                !DOCTYPE
-                html {
-                    head lang="en" {
-                        meta charset="utf-8";
-                        link href=(format!("data:image/gif;base64,{FAVICON}")) rel="icon";
+    fn render_to(&self, output: &mut String) {
+        maud! {
+            !DOCTYPE
+            html {
+                head lang="en" {
+                    meta charset="utf-8";
+                    link href=(format!("data:image/gif;base64,{FAVICON}")) rel="icon";
 
-                        script data-goatcounter="https://loap.goatcounter.com/count"
-                            async src="//gc.zgo.at/count.js" { }
+                    script data-goatcounter="https://loap.goatcounter.com/count"
+                        async src="//gc.zgo.at/count.js" { }
 
-                        style { (Raw(STYLE)) }
-                        title {
-                            "LOAP — " (self.page.title())
-                        }
+                    style { (Raw(STYLE)) }
+                    title {
+                        "LOAP — " (self.page.title())
                     }
+                }
                 body {
                     nav {
                         h1 { a href="/" { "LIPSTICK\nON A PIG" } }
