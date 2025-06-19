@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const known_folders = b.dependency("known_folders", .{}).module("known-folders");
     const clap = b.dependency("clap", .{}).module("clap");
-    const curl = b.dependency("curl", .{}).module("curl");
+    const curl = b.dependency("curl", .{ .link_vendor = false }).module("curl");
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{ .name = "kiss-pig", .root_module = exe_mod });
     exe.linkLibC();
+    exe.linkSystemLibrary("curl");
     exe.root_module.addImport("known-folders", known_folders);
     exe.root_module.addImport("clap", clap);
     exe.root_module.addImport("curl", curl);

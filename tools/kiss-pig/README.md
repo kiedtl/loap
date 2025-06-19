@@ -16,7 +16,7 @@ If `version` is not provided, `KISS_PATH` will be searched for the package.
 
 ## Downloads
 
-A statically-linked binary is available from the GitHub releases.
+Binaries are available from the GitHub releases.
 
 Ironically, it isn't available in LOAP, since `kiss-pig` isn't in any repository
 and I don't want to create one just for this.
