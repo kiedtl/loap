@@ -10,16 +10,13 @@ LOAP_MAINTAINER="${LOAP_MAINTAINER:-$USER}"
 # Hardcoded, not really intended to be configured.
 SERVER="https://loap.k1sslinux.org"
 
-export MAKEFLAGS="-j $(($(nproc)-1))"
-export CFLAGS="-march=x86-64-v2 -pipe -O2 -fuse-ld=mold"
-export CXXFLAGS="$CFLAGS"
-export CC="sccache gcc"
-export RUSTFLAGS="-C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=mold"
+export CC="${LOAP_CC:-gcc}"
+export LD="${LOAP_LD:-gold}"
 
-export CCACHE_PREFIX=sccache
-export CMAKE_C_COMPILER_LAUNCHER=sccache
-export CMAKE_CXX_COMPILER_LAUNCHER=sccache
-export RUSTC_WRAPPER=sccache
+export MAKEFLAGS="-j $(($(nproc)-1))"
+export CFLAGS="-march=x86-64-v2 -pipe -O2 -fuse-ld=$LD"
+export CXXFLAGS="$CFLAGS"
+export RUSTFLAGS="-C target-cpu=x86-64-v2 -C link-arg=-fuse-ld=$LD"
 
 log_no_nl() {
     fmt="$1"; shift
@@ -71,8 +68,11 @@ package="$(basename "$PWD")"
 version="$(sed 's/ /-/' < version)"
 
 upload_new() {
+    # Download sources prior to building to ensure build times are accurate.
+    kiss d
+
     began="$(date +%s)"
-    KISS_PROMPT=0 kiss b
+    KISS_GET=should_have_already_downloaded KISS_PROMPT=0 kiss b
     completed_at="$(date +%s)"
     completed_at_rfc339="$(date -u -d "@$completed_at" +"%Y-%m-%dT%H:%M:%SZ")"
     elapsed="$((completed_at - began))"
@@ -149,10 +149,52 @@ upload_existing_report() {
     log_done
 }
 
+print_help() {
+    cat >&2 <<EOF
+Usage: loap [opts]
+Usage: loap [opts] <report.json> <tarball.tar.xz>
+
+Options:
+    --sccache-cmake     Set environment variable for cmake to use sccache.
+    --sccache           Set \$CC to be wrapped by sccache.
+EOF
+}
+
+O="$(getopt -l sccache-cmake -l sccache -l help -- h "$@")" || exit 1
+eval set -- "$O"
+while true
+do
+    case "$1" in
+        -h|--help)
+            print_help
+            exit 0
+        ;;
+        --sccache-cmake)
+            shift
+            export CCACHE_PREFIX=sccache
+            export CMAKE_C_COMPILER_LAUNCHER=sccache
+            export CMAKE_CXX_COMPILER_LAUNCHER=sccache
+            log "Configuring cmake with sccache."
+        ;;
+        --sccache)
+            shift
+            export CC="sccache $CC"
+            export RUSTC_WRAPPER=sccache
+            log "Using sccache (incompatible with --sccache-cmake!)."
+        ;;
+        --)  shift; break ;;
+        *)
+            print_help
+            exit 1
+        ;;
+    esac
+done
+
 log 'Building as %s, using key %s' "$LOAP_MAINTAINER" "$LOAP_PRIVATE_KEY"
 
 if [ -f "$1" ] && [ -f "$2" ]
 then
+    log "Uploading existing report."
     upload_existing_report "$1" "$2"
 else
     upload_new
