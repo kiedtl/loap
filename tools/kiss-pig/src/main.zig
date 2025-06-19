@@ -1,8 +1,3 @@
-const c = @cImport({
-    @cInclude("stdio.h");
-    @cInclude("curl/curl.h");
-});
-
 const std = @import("std");
 const fmt = std.fmt;
 const fs = std.fs;
@@ -13,6 +8,8 @@ const process = std.process;
 const c_alloc = std.heap.c_allocator;
 const kf = @import("known-folders");
 const clap = @import("clap");
+const curl = @import("curl");
+const c = curl.libcurl;
 
 pub const std_options = std.Options{
     .logFn = myLogFn,
