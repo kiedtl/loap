@@ -5,6 +5,7 @@ use std::fmt;
 use std::fs;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 use hypertext::prelude::*;
@@ -16,7 +17,7 @@ use axum::{
     extract::{Path, State, Request},
     body::Body,
     routing::{post, get}, Router,
-    response::{IntoResponse},
+    response::{Response, IntoResponse},
     handler::HandlerWithoutStateExt,
 };
 use chrono::{DateTime, Utc};
@@ -28,9 +29,9 @@ use sqlx::{Row, FromRow, Connection, SqliteConnection};
 use tower::util::ServiceExt;
 use tower_http::services::ServeDir;
 
-use log::{error, info};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
+use tracing::Span;
 
 const USER_ORPH: u32 = 0;
 const USER_CEMT: u32 = 2;
@@ -169,7 +170,7 @@ macro_rules! try_or_500 {
         match $ex {
             Ok(value) => value,
             Err(err) => {
-                error!("E: {:#}", err.to_string());
+                tracing::error!("E: {:#}", err.to_string());
                 return construct_500_page(err.into());
             },
         }
@@ -244,7 +245,37 @@ async fn main() -> AnyResult<()> {
         .route("/api/b/report", post(api::report_build))
         .route("/api/b/ls", get(api::list_builds))
         .fallback(static_page)
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request<Body>| {
+                    let ip = request
+                        .headers()
+                        .get("cf-connecting-ip") // Cloudflare proxy
+                        .or_else(|| request.headers().get("x-forwarded-for"))
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("unknown");
+                    let user_agent = request
+                        .headers()
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("unknown");
+                    tracing::info_span!(
+                        "request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        ua = user_agent,
+                        ip = %ip,
+                    )
+                })
+                .on_response(|response: &Response<Body>, latency: Duration, span: &Span| {
+                    tracing::info!(
+                        parent: span,
+                        status = response.status().as_u16(),
+                        latency = latency.as_millis(),
+                        "response"
+                    );
+                })
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
@@ -260,8 +291,6 @@ async fn package_page(
 )
     -> impl IntoResponse
 {
-    info!("page: package");
-
     let pkg_id = match get_package_id(&state, &pkgname).await {
         Err(e) => return construct_500_page(e),
         Ok(None) => return construct_404_page(),
@@ -324,7 +353,7 @@ async fn package_page(
                                         td #m { (utils::fmt_duration(time_since))" ago" }
                                         td { (build.builder_name) }
                                         td #m { (build.downloads) }
-                                        td { a .btn href=(dl) download { "Go" } }
+                                        td { a .btn rel="nofollow noindex" href=(dl) download { "Go" } }
                                     }
                                 }
                             })
@@ -344,8 +373,6 @@ async fn maintainer_page(
 )
     -> impl IntoResponse
 {
-    info!("page: maintainer");
-
     let maintainer = match get_maintainer(&state, maintainer_name.clone()).await {
         Ok(Some(m)) => m,
         Ok(None) => return (StatusCode::OK, maud! {
@@ -420,8 +447,6 @@ async fn maintainer_page(
 }
 
 async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
-    info!("page: home");
-
     let packages = try_or_500!(get_packages(&state, None).await);
 
     let page = maud! {
@@ -474,8 +499,6 @@ async fn home_page(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn stats_page(State(state): State<AppState>) -> impl IntoResponse {
-    info!("page: stats");
-
     let mut conn = state.db.lock().await;
 
     #[derive(Clone, FromRow)]
@@ -573,7 +596,6 @@ async fn static_page(
         if page.name == path
         || page.name == format!("{path}.html")
         {
-            info!("page: {}", page.name);
             return api::AnyOf2::A((StatusCode::OK, maud! {
                 Doc page=(page.meta.page.clone()) {
                     (Raw(page.html.clone()))
@@ -583,7 +605,6 @@ async fn static_page(
     }
 
     // Then check for a public file...
-    info!("page: fallback to servdir for {}", path);
     let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
     match ServeDir::new("public")
         .not_found_service(e404_page.into_service())
