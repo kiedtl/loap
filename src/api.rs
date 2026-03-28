@@ -104,7 +104,7 @@ pub async fn download_by_build_id(
     let url = s3.signed_url(
         Method::GET,
         &object_store::path::Path::from(path.clone()),
-        Duration::from_secs(3 * 60)
+        Duration::from_secs(10 * 60)
     )
         .await
         .map_err(|e| e.to_string())?;
